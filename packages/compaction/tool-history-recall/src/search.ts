@@ -8,6 +8,7 @@ import { Buffer } from 'node:buffer'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { checkpointsFromEvents, findCheckpoint } from './checkpoints.ts'
+import { evidencePaths, readEvidenceText, scanEvidenceText } from './evidence.ts'
 import { indexSessionEvents, loadRecordsFromEvents } from './records.ts'
 import type {
   HistorySearchHit,
@@ -52,15 +53,18 @@ export async function searchHistory(
   const log = await query.readRawLog(sessionId, signal)
   const bySeq = indexSessionEvents(log.events)
   const all = checkpointsFromEvents(log.events, bySeq)
-  if (all.length === 0) {
-    return 'This session has no compacted checkpoints, so there is no compacted history to search.'
+  const evidence = checkpointSeq === undefined ? [...evidencePaths(log.events)] : []
+  if (all.length === 0 && evidence.length === 0) {
+    return 'This session has no compacted checkpoints or saved evidence, so there is no compacted history to search.'
   }
   const selected = checkpointSeq === undefined ? all : [findCheckpoint(log.events, checkpointSeq, bySeq)]
   const needle = trimmed.toLowerCase()
   const hits: HistorySearchHit[] = []
+  const evidenceHits: string[] = []
   const seenOriginals = new Set<number>()
   let duplicatesSkipped = 0
   let checkpointsScanned = 0
+  let evidenceScanned = 0
   let eventsScanned = 0
   let bytesScanned = 0
   let capped = false
@@ -103,14 +107,33 @@ export async function searchHistory(
     if (capped) break
   }
 
+  for (const path of evidence) {
+    if (hits.length + evidenceHits.length >= config.maxSearchHits) {
+      capped = true
+      break
+    }
+    const body = await readEvidenceText(path, config)
+    const bytes = Buffer.byteLength(body, 'utf8')
+    if (bytesScanned + bytes > config.maxSearchBytes) {
+      capped = true
+      break
+    }
+    bytesScanned += bytes
+    evidenceScanned += 1
+    evidenceHits.push(...scanEvidenceText(path, body, trimmed, config.maxSearchHits - hits.length - evidenceHits.length))
+    if (hits.length + evidenceHits.length >= config.maxSearchHits) capped = true
+  }
+
   const coverage = `Scanned ${String(checkpointsScanned)} of ${String(selected.length)} checkpoint(s), `
-    + `${String(eventsScanned)} events, ${formatBytes(bytesScanned)} for "${trimmed}": ${String(hits.length)} match(es)`
+    + `${String(evidenceScanned)} evidence file(s), ${String(eventsScanned)} events, ${formatBytes(bytesScanned)} for "${trimmed}": `
+    + `${String(hits.length + evidenceHits.length)} match(es)`
     + `${duplicatesSkipped === 0 ? '' : `, ${String(duplicatesSkipped)} duplicate citation(s) skipped`}.`
   const lines = [coverage]
   for (const hit of hits) {
     lines.push('', `- c${String(hit.checkpointSeq)} #${String(hit.seq)} ${hit.label}: ${hit.snippet}`)
   }
-  if (hits.length === 0) {
+  for (const hit of evidenceHits) lines.push('', hit)
+  if (hits.length + evidenceHits.length === 0) {
     lines.push('', 'No literal match. The scan is case-insensitive but literal; try a shorter exact phrase, or read the checkpoint transcript directly.')
   }
   if (capped) {

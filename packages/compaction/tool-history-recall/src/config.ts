@@ -14,6 +14,8 @@ export const DEFAULT_MAX_SEARCH_HITS = 20
 export const DEFAULT_MAX_SEARCH_BYTES = 2_000_000
 /** Default maximum checkpoints named in one page header. */
 export const DEFAULT_MAX_LISTED_CHECKPOINTS = 8
+/** Default maximum bytes of one saved tool-output evidence file. */
+export const DEFAULT_MAX_EVIDENCE_BYTES = 16_777_216
 
 /**
  * Resolve and validate recall configuration.
@@ -25,11 +27,13 @@ export function resolveConfig(config: HistoryRecallConfig = {}): ResolvedHistory
   const maxSearchHits = config.maxSearchHits ?? DEFAULT_MAX_SEARCH_HITS
   const maxSearchBytes = config.maxSearchBytes ?? DEFAULT_MAX_SEARCH_BYTES
   const maxListedCheckpoints = config.maxListedCheckpoints ?? DEFAULT_MAX_LISTED_CHECKPOINTS
+  const maxEvidenceBytes = config.maxEvidenceBytes ?? DEFAULT_MAX_EVIDENCE_BYTES
   assertInteger('maxPageBytes', maxPageBytes, 1024, 1_048_576)
   assertInteger('maxSearchHits', maxSearchHits, 1, 1_000)
   assertInteger('maxSearchBytes', maxSearchBytes, 1_024, 100_000_000)
   assertInteger('maxListedCheckpoints', maxListedCheckpoints, 0, 64)
-  return { maxPageBytes, maxSearchHits, maxSearchBytes, maxListedCheckpoints }
+  assertInteger('maxEvidenceBytes', maxEvidenceBytes, 1_024, 268_435_456)
+  return { maxPageBytes, maxSearchHits, maxSearchBytes, maxListedCheckpoints, maxEvidenceBytes }
 }
 
 function assertInteger(name: string, value: number, min: number, max: number): void {

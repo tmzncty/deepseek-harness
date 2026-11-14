@@ -18,6 +18,8 @@ export interface HistoryRecallConfig {
   maxSearchBytes?: number
   /** Maximum checkpoints listed in one page header. Defaults to 8. */
   maxListedCheckpoints?: number
+  /** Maximum bytes of one saved tool-output evidence file. Defaults to 16777216. */
+  maxEvidenceBytes?: number
 }
 
 /** Fully resolved, validated recall bounds. */
@@ -26,6 +28,7 @@ export interface ResolvedHistoryRecallConfig {
   readonly maxSearchHits: number
   readonly maxSearchBytes: number
   readonly maxListedCheckpoints: number
+  readonly maxEvidenceBytes: number
 }
 
 /** One durable compaction checkpoint and the surface span it shadows. */

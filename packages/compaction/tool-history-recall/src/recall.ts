@@ -7,6 +7,7 @@
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { checkpointsFromEvents, findCheckpoint } from './checkpoints.ts'
 import { cursorInvalid } from './errors.ts'
+import { evidencePaths } from './evidence.ts'
 import { decodeCursor, renderPage } from './pagination.ts'
 import { indexSessionEvents, loadRecordsFromEvents } from './records.ts'
 import type {
@@ -30,24 +31,36 @@ export async function readCheckpointDirectory(
   signal?: AbortSignal,
 ): Promise<string> {
   const log = await query.readRawLog(sessionId, signal)
-  return formatDirectory(checkpointsFromEvents(log.events), limit)
+  return formatDirectory(checkpointsFromEvents(log.events), limit, [...evidencePaths(log.events)])
 }
 
-function formatDirectory(checkpoints: readonly CompactionCheckpoint[], limit: number): string {
+function formatDirectory(
+  checkpoints: readonly CompactionCheckpoint[],
+  limit: number,
+  evidence: readonly string[],
+): string {
+  const lines: string[] = []
   if (checkpoints.length === 0) {
-    return 'This session has no compacted checkpoints yet. Older history is still visible; nothing has been condensed.'
+    lines.push('This session has no compacted checkpoints yet.')
+  } else {
+    const shown = limit <= 0 ? [] : checkpoints.slice(-limit)
+    const omitted = checkpoints.length - shown.length
+    lines.push(`Compacted checkpoints (${String(checkpoints.length)}):`)
+    for (const checkpoint of shown) {
+      lines.push(
+        `- c${String(checkpoint.summarySeq)}: shadows #${String(checkpoint.shadowedRange.start)}–#${String(checkpoint.shadowedRange.end)}, `
+          + `${String(checkpoint.shadowedSeqs.length)} events, ~${String(checkpoint.shadowedTokenCount)} tokens (${checkpoint.state})`,
+      )
+    }
+    if (omitted > 0) lines.push(`- (${String(omitted)} older checkpoint(s) omitted)`)
+    lines.push('', 'Read one span with history_read({checkpoint: <c-number>}); without a checkpoint this tool lists them.')
   }
-  const shown = limit <= 0 ? [] : checkpoints.slice(-limit)
-  const omitted = checkpoints.length - shown.length
-  const lines = [`Compacted checkpoints (${String(checkpoints.length)}):`]
-  for (const checkpoint of shown) {
-    lines.push(
-      `- c${String(checkpoint.summarySeq)}: shadows #${String(checkpoint.shadowedRange.start)}–#${String(checkpoint.shadowedRange.end)}, `
-        + `${String(checkpoint.shadowedSeqs.length)} events, ~${String(checkpoint.shadowedTokenCount)} tokens (${checkpoint.state})`,
-    )
+  if (evidence.length > 0) {
+    lines.push('', `Saved full-output evidence (${String(evidence.length)}):`)
+    for (const path of evidence.slice(-limit <= 0 ? 0 : limit)) {
+      lines.push(`- ${path} (read with history_read evidence; search with history_search evidence)`)
+    }
   }
-  if (omitted > 0) lines.push(`- (${String(omitted)} older checkpoint(s) omitted)`)
-  lines.push('', 'Read one span with history_read({checkpoint: <c-number>}); without a checkpoint this tool lists them.')
   return lines.join('\n')
 }
 
@@ -73,7 +86,11 @@ export async function readHistory(
   const log = await query.readRawLog(sessionId, signal)
   const bySeq = indexSessionEvents(log.events)
   if (checkpointSeq === undefined) {
-    return formatDirectory(checkpointsFromEvents(log.events, bySeq), config.maxListedCheckpoints)
+    return formatDirectory(
+      checkpointsFromEvents(log.events, bySeq),
+      config.maxListedCheckpoints,
+      [...evidencePaths(log.events)],
+    )
   }
   const checkpoint = findCheckpoint(log.events, checkpointSeq, bySeq)
   const cursor = cursorText === undefined ? undefined : decodeCursor(cursorText)
