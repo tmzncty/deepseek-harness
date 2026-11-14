@@ -44,6 +44,10 @@ describe('dsh-base bundle', () => {
       name: '@deepseek-ai/dsh-web-search-deepseek', config: { apiKeyEnv: 'DEEPSEEK_API_KEY' },
     })
     expect(rows.find(row => row.id === 'tool-web')?.config).toMatchObject({ fetch: true })
+    expect(rows.find(row => row.id === 'tool-history-recall')).toEqual({
+      id: 'tool-history-recall', name: '@deepseek-ai/dsh-tool-history-recall',
+    })
+    expect(manifest.dependencies).toHaveProperty('@deepseek-ai/dsh-tool-history-recall')
     expect(manifest.dependencies).not.toHaveProperty('@deepseek-ai/dsh-subagent-codex')
     expect(manifest.dependencies).not.toHaveProperty('@deepseek-ai/dsh-subagent-claude-code')
     expect(manifest.dependencies).toHaveProperty('@deepseek-ai/dsh-web-fetch-http')

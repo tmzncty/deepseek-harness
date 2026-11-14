@@ -160,6 +160,24 @@ export interface SessionEventWindow {
   endSeq: SessionSeq
 }
 
+/** Request for an explicit, bounded set of raw events by seq. */
+export interface SessionEventRangeRequest {
+  /** Session that owns every requested event. */
+  sessionId: SessionId
+  /** Strictly ascending, unique event seqs; at most the configured read window. */
+  seqs: readonly SessionSeq[]
+}
+
+/** Requested events and the header observed with them, in requested seq order. */
+export interface SessionEventRangeObservation {
+  /** Cloned header for the live-preferred source read. */
+  session: SessionHeader
+  /** Exact number of fork-inherited events in the observed log. */
+  inheritedEventCount: SessionLogOffset
+  /** Full cloned events at the requested seqs, in requested seq order. */
+  events: SessionEvent[]
+}
+
 /** Latest folded title bound to the same session-header observation. */
 export interface SessionTitleObservation {
   /** Cloned header selected with the event log used for the title fold. */

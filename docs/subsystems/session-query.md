@@ -298,6 +298,30 @@ interface SessionEventWindow {
 }
 ```
 
+An explicit range read addresses the exact seqs a consumer already needs, with no inferred window. It stays inside the configured read window and returns the events in requested order.
+
+```ts type-equiv
+/** Request for an explicit, bounded set of raw events by seq. */
+interface SessionEventRangeRequest {
+  /** Session that owns every requested event. */
+  sessionId: SessionId
+  /** Strictly ascending, unique event seqs; at most the configured read window. */
+  seqs: readonly SessionSeq[]
+}
+```
+
+```ts type-equiv
+/** Requested events and the header observed with them, in requested seq order. */
+interface SessionEventRangeObservation {
+  /** Cloned header for the live-preferred source read. */
+  session: SessionHeader
+  /** Exact number of fork-inherited events in the observed log. */
+  inheritedEventCount: SessionLogOffset
+  /** Full cloned events at the requested seqs, in requested seq order. */
+  events: SessionEvent[]
+}
+```
+
 ## Event relationships
 
 Event traces distinguish positional surface replacement from events cited as sources. Every seq list contains direct links except `replacementChain`, which follows immediate replacers from the target to the final positional replacement.
@@ -513,6 +537,17 @@ async traceEvent(request: SessionEventTraceRequest, signal?: AbortSignal): Promi
  * @returns cloned target and neighboring events.
  */
 async readEvent(request: SessionEventReadRequest, signal?: AbortSignal): Promise<SessionEventWindow>
+
+/**
+ * Read an explicit bounded set of raw events by seq from one corpus
+ * observation. This is the paged-history read for consumers that already
+ * know which seqs they need; it never infers a range.
+ * @param request - target session and strictly ascending, unique seqs.
+ * @param signal - optional cancellation for persisted source resolution.
+ * @returns cloned header and exactly the requested events in requested order.
+ * @throws when the request is empty, exceeds the read window, is not strictly ascending, or cites a missing seq.
+ */
+async readEventRange( request: SessionEventRangeRequest, signal?: AbortSignal, ): Promise<SessionEventRangeObservation>
 ```
 
 Types: [Session](session.md) · [SessionId](core.md) · [SessionTitleSnapshot](session-title.md)

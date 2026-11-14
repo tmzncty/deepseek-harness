@@ -1140,6 +1140,45 @@ describe('session-query exact reads', () => {
     }
   })
 
+  it('reads an explicit bounded event range and validates its coordinates', async () => {
+    const ctx = await liveContext({ readWindowMax: 2 })
+    const session = ctx.sessions.create(brandString<SessionId>('range'), { meta: { cwd: '/work' } })
+    session.append('turn/start', { turn: 1 })
+    for (const text of ['zero', 'one', 'two', 'three']) {
+      session.append(
+        'user/message',
+        createUserMessage({
+          content: [{ type: 'text', text }], source: { kind: 'user' },
+        }),
+        { surfaceOp: 'append' },
+      )
+    }
+
+    const result = await ctx.sessionQuery.readEventRange({
+      sessionId: session.id,
+      seqs: [SessionSeq(0), SessionSeq(2)],
+    })
+    expect(result.session).toEqual(session.header)
+    expect(result.events.map(event => event.seq)).toEqual([0, 2])
+    Object.assign(result.session, { createdAt: -1 })
+    expect(session.header.createdAt).not.toBe(-1)
+
+    await expect(ctx.sessionQuery.readEventRange({ sessionId: session.id, seqs: [] }))
+      .rejects.toThrow(expectCode('SESSION_QUERY_INVALID_WINDOW'))
+    await expect(ctx.sessionQuery.readEventRange({
+      sessionId: session.id,
+      seqs: [SessionSeq(0), SessionSeq(1), SessionSeq(2)],
+    })).rejects.toThrow(expectCode('SESSION_QUERY_INVALID_WINDOW'))
+    await expect(ctx.sessionQuery.readEventRange({
+      sessionId: session.id,
+      seqs: [SessionSeq(2), SessionSeq(1)],
+    })).rejects.toThrow(expectCode('SESSION_QUERY_INVALID_WINDOW'))
+    await expect(ctx.sessionQuery.readEventRange({
+      sessionId: session.id,
+      seqs: [SessionSeq(0), SessionSeq(9)],
+    })).rejects.toThrow(expectCode('SESSION_QUERY_EVENT_NOT_FOUND'))
+  })
+
   it('merges authoritative persistence with live precedence and detects conflicts', async () => {
     const shared = header('shared', 3, { cwd: '/same' })
     const durable = header('durable', 2)

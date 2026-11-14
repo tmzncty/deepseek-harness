@@ -24,6 +24,8 @@ import type {
   SessionEventSearchRequest,
   SessionEventTraceObservation,
   SessionEventTraceRequest,
+  SessionEventRangeObservation,
+  SessionEventRangeRequest,
   SessionEventWindow,
   SessionLineageTrace,
   SessionLogSnapshot,
@@ -370,6 +372,57 @@ export abstract class SessionQueryEngine extends Service {
     const sessionId = request.sessionId
     const seq = request.seq
     return this._readEvent(sessionId, seq, before, after, signal)
+  }
+
+  /**
+   * Read an explicit bounded set of raw events by seq from one corpus
+   * observation. This is the paged-history read for consumers that already
+   * know which seqs they need; it never infers a range.
+   * @param request - target session and strictly ascending, unique seqs.
+   * @param signal - optional cancellation for persisted source resolution.
+   * @returns cloned header and exactly the requested events in requested order.
+   * @throws when the request is empty, exceeds the read window, is not strictly ascending, or cites a missing seq.
+   */
+  async readEventRange(
+    request: SessionEventRangeRequest,
+    signal?: AbortSignal,
+  ): Promise<SessionEventRangeObservation> {
+    const seqs = request.seqs
+    if (seqs.length === 0) {
+      throw new SessionQueryError('readEventRange requires at least one seq', 'SESSION_QUERY_INVALID_WINDOW')
+    }
+    if (seqs.length > this._readWindowMax) {
+      throw new SessionQueryError(
+        `readEventRange accepts at most ${String(this._readWindowMax)} seqs`,
+        'SESSION_QUERY_INVALID_WINDOW',
+      )
+    }
+    for (let index = 0; index < seqs.length; index += 1) {
+      const seq = seqs[index]
+      if (seq === undefined || !Number.isSafeInteger(seq) || seq < 0) {
+        throw new SessionQueryError('readEventRange seqs must be non-negative safe integers', 'SESSION_QUERY_INVALID_WINDOW')
+      }
+      if (index > 0 && seq <= (seqs[index - 1] ?? -1)) {
+        throw new SessionQueryError('readEventRange seqs must be strictly ascending and unique', 'SESSION_QUERY_INVALID_WINDOW')
+      }
+    }
+    const loaded = await this._corpus.load(request.sessionId, signal)
+    signal?.throwIfAborted()
+    const events = seqs.map((seq) => {
+      const event = loaded.events[seq]
+      if (event === undefined || event.seq !== seq) {
+        throw new SessionQueryError(
+          `session "${request.sessionId}" has no event at seq ${String(seq)}`,
+          'SESSION_QUERY_EVENT_NOT_FOUND',
+        )
+      }
+      return snapshotSessionEvent(event)
+    })
+    return {
+      session: structuredClone(loaded.header),
+      inheritedEventCount: loaded.inheritedEventCount,
+      events,
+    }
   }
 
   private async _readEvent(
