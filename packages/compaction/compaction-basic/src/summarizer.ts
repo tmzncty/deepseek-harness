@@ -75,7 +75,7 @@ const CHECKPOINT_PREAMBLE =
 
 /** Extra preamble for substantial checkpoints where exact recall can matter. */
 const CHECKPOINT_RECALL_PREAMBLE =
-  'This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. It may omit exact earlier details: when an answer depends on prior wording or a missing fact, call history_read or history_search yourself before saying the detail is absent. Do not ask the user for permission to search. Continue the task directly from the messages that follow, without acknowledging this checkpoint.'
+  'This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. It may omit exact earlier details: a summary that does not mention a fact is not evidence that the fact was never stated. When an answer depends on prior wording, a missing fact, or an apparent absence, call history_read or history_search yourself before saying the detail is absent. Do not ask the user for permission to search. Continue the task directly from the messages that follow, without acknowledging this checkpoint.'
 
 /**
  * The replayed conversation surface the summarizer condenses. Reproducing the
