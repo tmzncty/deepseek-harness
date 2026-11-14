@@ -501,6 +501,34 @@ describe('session-query exact reads', () => {
     await expect(ctx.sessionQuery.readSession(corrupt.id)).rejects.toThrow('seed event at index 0 has seq 1')
   })
 
+  it('reads a raw log for scanning without replay-cloning every event', async () => {
+    const durable = header('raw-log', 2)
+    const durableEvents = eventLog('raw')
+    TestPersistence.reset([{ meta: durable, events: durableEvents }])
+    const ctx = await liveContext()
+    await ctx.plugin(TestPersistence)
+
+    const persisted = await ctx.sessionQuery.readRawLog(durable.id)
+    expect(persisted).toEqual({
+      session: durable,
+      inheritedEventCount: SessionLogOffset(0),
+      events: durableEvents,
+      capturedThroughSeq: durableEvents.at(-1)?.seq ?? null,
+    })
+    expect(TestPersistence.readCalls).toEqual([durable.id])
+
+    const live = ctx.sessions.create(brandString<SessionId>('raw-live'), { seed: eventLog('live'), meta: { createdAt: 1 } })
+    const liveSnapshot = await ctx.sessionQuery.readRawLog(live.id)
+    expect(liveSnapshot.events).toEqual(live.snapshotEvents())
+    expect(liveSnapshot.capturedThroughSeq).toBe(live.seq - 1)
+
+    await expect(ctx.sessionQuery.readRawLog(brandString<SessionId>('missing-raw')))
+      .rejects.toMatchObject({ code: 'SESSION_QUERY_SESSION_NOT_FOUND' })
+    const aborted = new AbortController()
+    aborted.abort()
+    await expect(ctx.sessionQuery.readRawLog(durable.id, aborted.signal)).rejects.toThrow()
+  })
+
   it('prefers a live owner that attaches while its persisted prefix is inspected', async () => {
     const shared = header('attach-during-inspect', 2)
     TestPersistence.reset([{ meta: shared, events: eventLog('persisted') }])

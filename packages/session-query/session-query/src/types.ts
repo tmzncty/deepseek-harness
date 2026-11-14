@@ -57,6 +57,24 @@ export interface SessionLogSnapshot {
   events: SessionEvent[]
 }
 
+/**
+ * One shallow, immutable raw-log observation: the event values are borrowed
+ * (shared frozen where persistence owns them) and are not replay-validated or
+ * cloned by the service. Use it for read-only scans that need speed and bounded
+ * copying; use {@link SessionLogSnapshot} when the caller needs an owned,
+ * replay-validated log.
+ */
+export interface SessionRawLogSnapshot {
+  /** Detached session header selected with the same raw log. */
+  session: SessionHeader
+  /** Exact fork-inherited event count paired with {@link session}. */
+  inheritedEventCount: SessionLogOffset
+  /** Borrowed contiguous raw events; callers must not mutate or retain mutable references. */
+  events: readonly SessionEvent[]
+  /** Highest raw-log seq included in the observation, or `null` for an empty log. */
+  capturedThroughSeq: OptionalSessionSeq
+}
+
 /** Lightweight metadata for one event within a logical session. */
 export interface SessionEventRecord {
   /** Session that owns the event. */

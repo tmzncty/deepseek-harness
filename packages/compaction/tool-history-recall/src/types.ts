@@ -6,7 +6,7 @@
  */
 
 import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
-import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
+import type { SessionRawLogSnapshot } from '@deepseek-ai/dsh-session-query'
 
 /** Deployment-owned bounds for recall reads and searches. */
 export interface HistoryRecallConfig {
@@ -40,6 +40,8 @@ export interface CompactionCheckpoint {
   readonly shadowedTokenCount: number
   /** Seq of the replacement `user/message`, when the checkpoint landed completely. */
   readonly replacementSeq: SessionSeq | undefined
+  /** Lifecycle of this checkpoint's own replacement node. */
+  readonly state: 'unfinished' | 'completed' | 'superseded'
   /** Whether a later compaction shadowed this checkpoint's replacement node. */
   readonly superseded: boolean
 }
@@ -55,6 +57,8 @@ export interface RecallCursor {
 /** One rendered surface event in a recall transcript. */
 export interface RenderedRecord {
   readonly seq: SessionSeq
+  /** Deepest original seq whose text this record shows. */
+  readonly originalSeq: SessionSeq
   readonly label: string
   readonly text: string
 }
@@ -72,5 +76,5 @@ export interface HistorySearchHit {
  * satisfies it; tests provide an in-memory implementation.
  */
 export interface RecallQuery {
-  readSession(sessionId: SessionId, signal?: AbortSignal): Promise<SessionLogSnapshot>
+  readRawLog(sessionId: SessionId, signal?: AbortSignal): Promise<SessionRawLogSnapshot>
 }

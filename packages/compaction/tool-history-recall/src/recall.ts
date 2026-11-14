@@ -8,7 +8,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import { checkpointsFromEvents, findCheckpoint } from './checkpoints.ts'
 import { cursorInvalid } from './errors.ts'
 import { decodeCursor, renderPage } from './pagination.ts'
-import { loadRecordsFromEvents } from './records.ts'
+import { indexSessionEvents, loadRecordsFromEvents } from './records.ts'
 import type {
   CompactionCheckpoint,
   RecallQuery,
@@ -29,7 +29,7 @@ export async function readCheckpointDirectory(
   limit: number,
   signal?: AbortSignal,
 ): Promise<string> {
-  const log = await query.readSession(sessionId, signal)
+  const log = await query.readRawLog(sessionId, signal)
   return formatDirectory(checkpointsFromEvents(log.events), limit)
 }
 
@@ -41,10 +41,9 @@ function formatDirectory(checkpoints: readonly CompactionCheckpoint[], limit: nu
   const omitted = checkpoints.length - shown.length
   const lines = [`Compacted checkpoints (${String(checkpoints.length)}):`]
   for (const checkpoint of shown) {
-    const state = checkpoint.superseded ? 'superseded' : 'readable'
     lines.push(
       `- c${String(checkpoint.summarySeq)}: shadows #${String(checkpoint.shadowedRange.start)}–#${String(checkpoint.shadowedRange.end)}, `
-        + `${String(checkpoint.shadowedSeqs.length)} events, ~${String(checkpoint.shadowedTokenCount)} tokens (${state})`,
+        + `${String(checkpoint.shadowedSeqs.length)} events, ~${String(checkpoint.shadowedTokenCount)} tokens (${checkpoint.state})`,
     )
   }
   if (omitted > 0) lines.push(`- (${String(omitted)} older checkpoint(s) omitted)`)
@@ -71,11 +70,12 @@ export async function readHistory(
   config: ResolvedHistoryRecallConfig,
   signal?: AbortSignal,
 ): Promise<string> {
-  const log = await query.readSession(sessionId, signal)
+  const log = await query.readRawLog(sessionId, signal)
+  const bySeq = indexSessionEvents(log.events)
   if (checkpointSeq === undefined) {
-    return formatDirectory(checkpointsFromEvents(log.events), config.maxListedCheckpoints)
+    return formatDirectory(checkpointsFromEvents(log.events, bySeq), config.maxListedCheckpoints)
   }
-  const checkpoint = findCheckpoint(log.events, checkpointSeq)
+  const checkpoint = findCheckpoint(log.events, checkpointSeq, bySeq)
   const cursor = cursorText === undefined ? undefined : decodeCursor(cursorText)
   if (cursor !== undefined && cursor.c !== checkpoint.summarySeq) {
     throw cursorInvalid(
@@ -87,6 +87,6 @@ export async function readHistory(
     seqs: checkpoint.shadowedSeqs,
     cursor,
     maxPageBytes: config.maxPageBytes,
-    load: fromIndex => loadRecordsFromEvents(log.events, checkpoint, fromIndex),
+    load: fromIndex => loadRecordsFromEvents(bySeq, checkpoint, fromIndex),
   }).text
 }

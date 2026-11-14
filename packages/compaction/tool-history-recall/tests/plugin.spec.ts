@@ -57,11 +57,12 @@ function fixture() {
 function fakeQuery(session: Session) {
   const events = session.snapshotEvents()
   return {
-    async readSession() {
+    async readRawLog() {
       return {
         session: session.header,
         inheritedEventCount: SessionLogOffset(0),
         events: [...events],
+        capturedThroughSeq: events.at(-1)?.seq ?? null,
       }
     },
   }

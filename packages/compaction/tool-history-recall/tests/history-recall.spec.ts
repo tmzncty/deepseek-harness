@@ -23,7 +23,7 @@ import {
   type SessionId,
 } from '@deepseek-ai/dsh-session'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
+import type { SessionRawLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import { resolveConfig } from '../src/config.ts'
 import { listCheckpoints } from '../src/checkpoints.ts'
 import { readCheckpointDirectory, readHistory } from '../src/recall.ts'
@@ -162,7 +162,7 @@ class FakeQuery implements RecallQuery {
     this.failSeq = failSeq
   }
 
-  async readSession(): Promise<SessionLogSnapshot> {
+  async readRawLog(): Promise<SessionRawLogSnapshot> {
     const events = this.failSeq === undefined
       ? this.events
       : this.events.filter(event => event.seq !== this.failSeq)
@@ -170,6 +170,7 @@ class FakeQuery implements RecallQuery {
       session: header(),
       inheritedEventCount: SessionLogOffset(0),
       events: [...events],
+      capturedThroughSeq: events.at(-1)?.seq ?? null,
     }
   }
 }
@@ -195,7 +196,7 @@ describe('history recall over compaction checkpoints', () => {
     const query = new FakeQuery(session.snapshotEvents())
     const directory = await readCheckpointDirectory(query, SESSION_ID, 8)
     expect(directory).toContain(`c${String(first.summarySeq)}`)
-    expect(directory).toContain('readable')
+    expect(directory).toContain('completed')
     expect(session.deriveMessages().some(message => message.content.some(block => block.type === 'text' && block.text.includes('CONSTRAINT')))).toBe(false)
   })
 

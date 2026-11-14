@@ -8,7 +8,7 @@ import { Buffer } from 'node:buffer'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { checkpointsFromEvents, findCheckpoint } from './checkpoints.ts'
-import { loadRecordsFromEvents } from './records.ts'
+import { indexSessionEvents, loadRecordsFromEvents } from './records.ts'
 import type {
   HistorySearchHit,
   RecallQuery,
@@ -49,14 +49,17 @@ export async function searchHistory(
       'HISTORY_SEARCH_INVALID_QUERY',
     )
   }
-  const log = await query.readSession(sessionId, signal)
-  const all = checkpointsFromEvents(log.events)
+  const log = await query.readRawLog(sessionId, signal)
+  const bySeq = indexSessionEvents(log.events)
+  const all = checkpointsFromEvents(log.events, bySeq)
   if (all.length === 0) {
     return 'This session has no compacted checkpoints, so there is no compacted history to search.'
   }
-  const selected = checkpointSeq === undefined ? all : [findCheckpoint(log.events, checkpointSeq)]
+  const selected = checkpointSeq === undefined ? all : [findCheckpoint(log.events, checkpointSeq, bySeq)]
   const needle = trimmed.toLowerCase()
   const hits: HistorySearchHit[] = []
+  const seenOriginals = new Set<number>()
+  let duplicatesSkipped = 0
   let checkpointsScanned = 0
   let eventsScanned = 0
   let bytesScanned = 0
@@ -67,7 +70,7 @@ export async function searchHistory(
     let fromIndex = 0
     while (fromIndex < checkpoint.shadowedSeqs.length) {
       if (signal?.aborted === true) signal.throwIfAborted()
-      const loaded = loadRecordsFromEvents(log.events, checkpoint, fromIndex)
+      const loaded = loadRecordsFromEvents(bySeq, checkpoint, fromIndex)
       if (loaded.records.length === 0) break
       fromIndex = loaded.nextIndex
       for (const record of loaded.records) {
@@ -80,6 +83,11 @@ export async function searchHistory(
         eventsScanned += 1
         const index = record.text.toLowerCase().indexOf(needle)
         if (index === -1) continue
+        if (seenOriginals.has(record.originalSeq)) {
+          duplicatesSkipped += 1
+          continue
+        }
+        seenOriginals.add(record.originalSeq)
         hits.push({
           checkpointSeq: checkpoint.summarySeq,
           seq: record.seq,
@@ -97,7 +105,8 @@ export async function searchHistory(
   }
 
   const coverage = `Scanned ${String(checkpointsScanned)} of ${String(selected.length)} checkpoint(s), `
-    + `${String(eventsScanned)} events, ${formatBytes(bytesScanned)} for "${trimmed}": ${String(hits.length)} match(es).`
+    + `${String(eventsScanned)} events, ${formatBytes(bytesScanned)} for "${trimmed}": ${String(hits.length)} match(es)`
+    + `${duplicatesSkipped === 0 ? '' : `, ${String(duplicatesSkipped)} duplicate citation(s) skipped`}.`
   const lines = [coverage]
   for (const hit of hits) {
     lines.push('', `- c${String(hit.checkpointSeq)} #${String(hit.seq)} ${hit.label}: ${hit.snippet}`)

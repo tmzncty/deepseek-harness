@@ -24,6 +24,7 @@ export function renderRecord(event: SessionEvent): RenderedRecord {
   const rendered = renderEvent(event)
   return {
     seq: event.seq,
+    originalSeq: event.seq,
     label: rendered.label,
     text: rendered.text,
   }

@@ -10,6 +10,8 @@ import type {
   CompactionCheckpoint,
   RecallQuery,
 } from './types.ts'
+import type { SessionEventIndex } from './records.ts'
+import { indexSessionEvents } from './records.ts'
 import { checkpointNotFound } from './errors.ts'
 
 /**
@@ -26,17 +28,20 @@ export async function listCheckpoints(
   sessionId: SessionId,
   signal?: AbortSignal,
 ): Promise<CompactionCheckpoint[]> {
-  const log = await query.readSession(sessionId, signal)
+  const log = await query.readRawLog(sessionId, signal)
   return checkpointsFromEvents(log.events)
 }
 
 /**
  * Derive checkpoints from one already-loaded event array.
  * @param events - complete logged events in seq order.
+ * @param bySeq - optional prebuilt seq index shared with the caller.
  * @returns checkpoints in ascending summary seq order.
  */
-export function checkpointsFromEvents(events: readonly SessionEvent[]): CompactionCheckpoint[] {
-  const bySeq = new Map<number, SessionEvent>(events.map(event => [event.seq, event]))
+export function checkpointsFromEvents(
+  events: readonly SessionEvent[],
+  bySeq: SessionEventIndex = indexSessionEvents(events),
+): CompactionCheckpoint[] {
   const summaries = events.filter((event): event is SessionEvent<'compaction/summary'> => event.type === 'compaction/summary')
   const shadowedByAny = new Set<number>()
   for (const summary of summaries) {
@@ -56,6 +61,9 @@ export function checkpointsFromEvents(events: readonly SessionEvent[]): Compacti
       shadowedSeqs: summary.data.shadowedSeqs,
       shadowedTokenCount: summary.data.shadowedTokenCount,
       replacementSeq,
+      state: replacementSeq === undefined
+        ? 'unfinished'
+        : shadowedByAny.has(replacementSeq) ? 'superseded' : 'completed',
       superseded: replacementSeq !== undefined && shadowedByAny.has(replacementSeq),
     }
   })
@@ -71,9 +79,10 @@ export function checkpointsFromEvents(events: readonly SessionEvent[]): Compacti
 export function findCheckpoint(
   events: readonly SessionEvent[],
   summarySeq: number,
+  bySeq?: SessionEventIndex,
 ): CompactionCheckpoint {
   if (!Number.isSafeInteger(summarySeq) || summarySeq < 0) throw checkpointNotFound(summarySeq)
-  const checkpoint = checkpointsFromEvents(events).find(candidate => candidate.summarySeq === summarySeq)
+  const checkpoint = checkpointsFromEvents(events, bySeq).find(candidate => candidate.summarySeq === summarySeq)
   if (checkpoint === undefined) throw checkpointNotFound(summarySeq)
   return checkpoint
 }
