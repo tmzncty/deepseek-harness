@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use `dsh-tool-history-recall` to let the model list this session's compaction checkpoints, page through the exact original events one checkpoint shadows, and search those originals for a literal phrase. Each call takes one asynchronous `ctx.sessionQuery` observation of the append-only Session log, so compacted summaries stay the current context while recovered evidence arrives as ordinary, logged tool output. Model-visible reads are byte-bounded and cursor-resumable; the package never rewrites a summary, the surface, or the request prefix.
+Use `dsh-tool-history-recall` to let the model list this session's compaction checkpoints, page through the exact original events one checkpoint shadows, and search those originals for a literal phrase. Each call takes one shallow `ctx.sessionQuery.readRawLog` observation and builds one seq index shared by every page batch, so compacted summaries stay the current context while recovered evidence arrives as ordinary, logged tool output. Model-visible reads are byte-bounded and cursor-resumable; the package never rewrites a summary, the surface, or the request prefix.
 
 ## Table of Contents
 
@@ -148,8 +148,8 @@ Append-only result text follows the reusable request prefix and does not invalid
 ## Known Limitations and Deferred Work
 
 - **Spill-truncated tool results were never in the log.** `dsh-spill-policy` may replace oversized tool output with a preview and locator before the `tool/result` event is appended. This package can only render bytes that reached the Session log; the spill file remains the only source for the removed middle until its retention sweep deletes it.
-- **One full-log observation per call.** `ctx.sessionQuery.readSession` currently materializes the complete logical log for one tool call. Paging bounds model-visible bytes, not that snapshot; a very large log costs memory proportional to its size on every recall call.
-- **No checkpoint footer.** The checkpoint text is unchanged, so the model learns checkpoint seqs from `history_read`'s directory rather than from the summary itself. Adding a deterministic footer is a separate compaction-format decision.
+- **One raw-log observation per call.** `ctx.sessionQuery.readRawLog` reads the complete raw log once without replay validation or per-event cloning; page bytes are still bounded by `maxPageBytes`, but peak memory grows with the raw log (an 85.8 MB / 114k-event fixture measured ~42 ms cold and ~8 MB extra RSS).
+- **Checkpoint guidance is conditional.** Substantial summaries carry a self-directed recall hint and evidence-boundary reminder; short summaries keep the original framing, and no checkpoint seq pointer is embedded in the summary.
 - **Literal search only.** Matching is case-insensitive and literal; there is no regex, semantic search, or structured query over JSON tool results.
 - **One session, no cross-session recall.** The tools read only the caller's session. Cross-session history remains the experimental `dsh-tool-session-query` surface.
 - **Not a compression backend.** The package does not choose ranges, summarize, or reduce tokens; it only exposes originals a backend already shadowed.
