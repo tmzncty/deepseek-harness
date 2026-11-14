@@ -3416,13 +3416,6 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'request', description: 'target session/seq and context sizes.' }, { name: 'signal', description: 'optional cancellation for persisted source resolution.' }],
         returns: 'cloned target and neighboring events.',
       },
-      {
-        signature: 'async readEventRange( request: SessionEventRangeRequest, signal?: AbortSignal, ): Promise<SessionEventRangeObservation>',
-        description: 'Read an explicit bounded set of raw events by seq from one corpus observation. This is the paged-history read for consumers that already know which seqs they need; it never infers a range.',
-        parameters: [{ name: 'request', description: 'target session and strictly ascending, unique seqs.' }, { name: 'signal', description: 'optional cancellation for persisted source resolution.' }],
-        returns: 'cloned header and exactly the requested events in requested order.',
-        throws: ['when the request is empty, exceeds the read window, is not strictly ascending, or cites a missing seq.'],
-      },
     ],
   },
   {
@@ -9060,14 +9053,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionEventMetadataFilter',
     declaration: 'export type SessionEventMetadataFilter = Exclude<SessionEventResultFilter, {\n    kind: \'text\';\n}>;',
-  },
-  {
-    name: 'SessionEventRangeObservation',
-    declaration: 'export interface SessionEventRangeObservation {\n    session: SessionHeader;\n    inheritedEventCount: SessionLogOffset;\n    events: SessionEvent[];\n}',
-  },
-  {
-    name: 'SessionEventRangeRequest',
-    declaration: 'export interface SessionEventRangeRequest {\n    sessionId: SessionId;\n    seqs: readonly SessionSeq[];\n}',
   },
   {
     name: 'SessionEventReadRequest',

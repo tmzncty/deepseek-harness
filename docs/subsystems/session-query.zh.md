@@ -298,30 +298,6 @@ interface SessionEventWindow {
 }
 ```
 
-显式范围读取按调用方已经需要的精确 seq 取事件，不推断窗口。它受配置的读取窗口约束，并按请求顺序返回事件。
-
-```ts type-equiv
-/** Request for an explicit, bounded set of raw events by seq. */
-interface SessionEventRangeRequest {
-  /** Session that owns every requested event. */
-  sessionId: SessionId
-  /** Strictly ascending, unique event seqs; at most the configured read window. */
-  seqs: readonly SessionSeq[]
-}
-```
-
-```ts type-equiv
-/** Requested events and the header observed with them, in requested seq order. */
-interface SessionEventRangeObservation {
-  /** Cloned header for the live-preferred source read. */
-  session: SessionHeader
-  /** Exact number of fork-inherited events in the observed log. */
-  inheritedEventCount: SessionLogOffset
-  /** Full cloned events at the requested seqs, in requested seq order. */
-  events: SessionEvent[]
-}
-```
-
 ## 事件关系
 
 事件追踪会区分位置替换与被引用为来源的事件。除 `replacementChain` 外，每个 seq 列表都只包含直接链接；该链从目标沿直接 replacer 追踪到最终的位置替换。
@@ -537,17 +513,6 @@ async traceEvent(request: SessionEventTraceRequest, signal?: AbortSignal): Promi
  * @returns cloned target and neighboring events.
  */
 async readEvent(request: SessionEventReadRequest, signal?: AbortSignal): Promise<SessionEventWindow>
-
-/**
- * Read an explicit bounded set of raw events by seq from one corpus
- * observation. This is the paged-history read for consumers that already
- * know which seqs they need; it never infers a range.
- * @param request - target session and strictly ascending, unique seqs.
- * @param signal - optional cancellation for persisted source resolution.
- * @returns cloned header and exactly the requested events in requested order.
- * @throws when the request is empty, exceeds the read window, is not strictly ascending, or cites a missing seq.
- */
-async readEventRange( request: SessionEventRangeRequest, signal?: AbortSignal, ): Promise<SessionEventRangeObservation>
 ```
 
 Types: [Session](session.zh.md) · [SessionId](core.zh.md) · [SessionTitleSnapshot](session-title.zh.md)

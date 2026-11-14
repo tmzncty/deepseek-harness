@@ -7,8 +7,8 @@
 import { Buffer } from 'node:buffer'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
-import { listCheckpoints, readCheckpoint } from './checkpoints.ts'
-import { loadRecords } from './records.ts'
+import { checkpointsFromEvents, findCheckpoint } from './checkpoints.ts'
+import { loadRecordsFromEvents } from './records.ts'
 import type {
   HistorySearchHit,
   RecallQuery,
@@ -49,12 +49,12 @@ export async function searchHistory(
       'HISTORY_SEARCH_INVALID_QUERY',
     )
   }
-  const selected = checkpointSeq === undefined
-    ? await listCheckpoints(query, sessionId, signal)
-    : [await readCheckpoint(query, sessionId, checkpointSeq, signal)]
-  if (selected.length === 0) {
+  const log = await query.readSession(sessionId, signal)
+  const all = checkpointsFromEvents(log.events)
+  if (all.length === 0) {
     return 'This session has no compacted checkpoints, so there is no compacted history to search.'
   }
+  const selected = checkpointSeq === undefined ? all : [findCheckpoint(log.events, checkpointSeq)]
   const needle = trimmed.toLowerCase()
   const hits: HistorySearchHit[] = []
   let checkpointsScanned = 0
@@ -67,10 +67,10 @@ export async function searchHistory(
     let fromIndex = 0
     while (fromIndex < checkpoint.shadowedSeqs.length) {
       if (signal?.aborted === true) signal.throwIfAborted()
-      const records = await loadRecords(query, sessionId, checkpoint, fromIndex, signal)
-      if (records.length === 0) break
-      fromIndex += records.length
-      for (const record of records) {
+      const loaded = loadRecordsFromEvents(log.events, checkpoint, fromIndex)
+      if (loaded.records.length === 0) break
+      fromIndex = loaded.nextIndex
+      for (const record of loaded.records) {
         const bytes = Buffer.byteLength(record.text, 'utf8')
         if (bytesScanned + bytes > config.maxSearchBytes) {
           capped = true

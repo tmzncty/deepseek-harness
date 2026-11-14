@@ -4447,7 +4447,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-tool-history-recall`
 
 - `inject`: `tools` · `systemPrompt` · `sessionQuery`
-- `source`: [`packages/compaction/tool-history-recall/src/types.ts:18`](../packages/compaction/tool-history-recall/src/types.ts)
+- `source`: [`packages/compaction/tool-history-recall/src/types.ts:12`](../packages/compaction/tool-history-recall/src/types.ts)
 
 ```ts config-catalog
 /** Deployment-owned bounds for recall reads and searches. */

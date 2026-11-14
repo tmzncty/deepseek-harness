@@ -22,13 +22,7 @@ import {
   type SessionId,
 } from '@deepseek-ai/dsh-session'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import { SessionQueryError } from '@deepseek-ai/dsh-session-query'
-import type {
-  SessionEventRangeObservation,
-  SessionEventRecord,
-  SessionEventReadRequest,
-  SessionEventWindow,
-} from '@deepseek-ai/dsh-session-query'
+import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import { resolveConfig } from '../src/config.ts'
 import { listCheckpoints } from '../src/checkpoints.ts'
 import { readCheckpointDirectory, readHistory } from '../src/recall.ts'
@@ -41,7 +35,9 @@ const SESSION_ID = brandString<SessionId>('recall-test')
 interface Conversation {
   readonly session: Session
   readonly constraintSeq: SessionSeq
+  readonly assistantSeq: SessionSeq
   readonly resultSeq: SessionSeq
+  readonly revisionSeq: SessionSeq
 }
 
 function conversation(): Conversation {
@@ -53,7 +49,7 @@ function conversation(): Conversation {
   }), { surfaceOp: 'append' })
   session.append('step/start', { turn: 1, step: 1 })
   const callId = brandString<ToolCallId>('call-1')
-  session.append('assistant/message', {
+  const assistant = session.append('assistant/message', {
     stream: [],
     turn: 1,
     step: 1,
@@ -79,7 +75,7 @@ function conversation(): Conversation {
   session.append('step/end', { turn: 1, step: 1 })
   session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
   session.append('turn/start', { turn: 2 })
-  session.append('user/message', createUserMessage({
+  const revision = session.append('user/message', createUserMessage({
     content: [{ type: 'text', text: 'REVISION: X: is now the only build disk; keep C: free.' }],
     source: { kind: 'user' },
   }), { surfaceOp: 'append' })
@@ -96,7 +92,13 @@ function conversation(): Conversation {
   }, { surfaceOp: 'append' })
   session.append('step/end', { turn: 2, step: 1 })
   session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
-  return { session, constraintSeq: constraint.seq, resultSeq: result.seq }
+  return {
+    session,
+    constraintSeq: constraint.seq,
+    assistantSeq: assistant.seq,
+    resultSeq: result.seq,
+    revisionSeq: revision.seq,
+  }
 }
 
 function appendBulk(session: Session): void {
@@ -159,47 +161,14 @@ class FakeQuery implements RecallQuery {
     this.failSeq = failSeq
   }
 
-  async listEvents(sessionId: SessionId): Promise<SessionEventRecord[]> {
-    return this.events.map(event => ({
-      sessionId,
-      seq: event.seq,
-      type: event.type,
-      time: event.time,
-      surface: 'shadowed',
-    }))
-  }
-
-  async readEvent(request: SessionEventReadRequest): Promise<SessionEventWindow> {
-    const target = this.events[request.seq]
-    if (target === undefined || this.failSeq === request.seq) {
-      throw new SessionQueryError(`missing ${String(request.seq)}`, 'SESSION_QUERY_EVENT_NOT_FOUND')
-    }
-    const start = Math.max(0, request.seq - (request.before ?? 0))
-    const end = Math.min(this.events.length - 1, request.seq + (request.after ?? 0))
+  async readSession(): Promise<SessionLogSnapshot> {
+    const events = this.failSeq === undefined
+      ? this.events
+      : this.events.filter(event => event.seq !== this.failSeq)
     return {
       session: header(),
       inheritedEventCount: SessionLogOffset(0),
-      target,
-      events: this.events.slice(start, end + 1),
-      startSeq: SessionSeq(start),
-      endSeq: SessionSeq(end),
-    }
-  }
-
-  async readEventRange(request: {
-    sessionId: SessionId
-    seqs: readonly SessionSeq[]
-  }): Promise<SessionEventRangeObservation> {
-    return {
-      session: header(),
-      inheritedEventCount: SessionLogOffset(0),
-      events: request.seqs.map((seq) => {
-        const event = this.events[seq]
-        if (event === undefined || this.failSeq === seq) {
-          throw new SessionQueryError(`missing ${String(seq)}`, 'SESSION_QUERY_EVENT_NOT_FOUND')
-        }
-        return event
-      }),
+      events: [...events],
     }
   }
 }
@@ -257,11 +226,14 @@ describe('history recall over compaction checkpoints', () => {
   })
 
   it('keeps facts and user revisions across two compaction generations', async () => {
-    const { session } = conversation()
-    const first = compact(session, [...session.surface.nodes], 'checkpoint one', 'c1')
+    const { session, constraintSeq, assistantSeq, resultSeq, revisionSeq } = conversation()
+    const first = compact(session, [constraintSeq], 'checkpoint one', 'c1')
+    // Surface order after the first replacement: [high-seq checkpoint,
+    // assistant, tool result, revision, ...]. The second span is therefore
+    // non-monotonic in seq order, which is the normal multi-generation shape.
     const second = compact(
       session,
-      [first.replacementSeq],
+      [first.replacementSeq, assistantSeq, resultSeq, revisionSeq],
       'checkpoint two merges checkpoint one',
       'c2',
     )
@@ -271,9 +243,11 @@ describe('history recall over compaction checkpoints', () => {
     expect(checkpoints[0]?.superseded).toBe(true)
     const older = await readHistory(query, SESSION_ID, first.summarySeq, undefined, QUERY_CONFIG)
     expect(older).toContain('CONSTRAINT: never delete C: files')
-    expect(older).toContain('REVISION: X: is now the only build disk')
+    expect(older).not.toContain('REVISION: X: is now the only build disk')
     const newer = await readHistory(query, SESSION_ID, second.summarySeq, undefined, QUERY_CONFIG)
     expect(newer).toContain('prior compaction checkpoint')
+    expect(newer).toContain('RESULT: build output lives on X:')
+    expect(newer).toContain('REVISION: X: is now the only build disk')
     expect(newer).not.toContain('CONSTRAINT: never delete C: files')
   })
 
@@ -348,6 +322,78 @@ describe('history recall over compaction checkpoints', () => {
       .rejects.toMatchObject({ code: 'HISTORY_EVIDENCE_INVALID' })
   })
 
+  it('follows a chained prune replacement to the deepest cited original', async () => {
+    const session = Session.create(SESSION_ID)
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'read the tool output' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    session.append('step/start', { turn: 1, step: 1 })
+    const callId = brandString<ToolCallId>('prune-call')
+    session.append('tool/call', { turn: 1, step: 1, callId, name: 'pwsh', arguments: '{}' })
+    const original = session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId,
+        content: [{ type: 'text', text: 'ORIGINAL-ONLY: the middle value is 417.' }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    const first = session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: { ...original.data.message, content: [{ type: 'text', text: 'head [...] tail' }] },
+    }, {
+      surfaceOp: { op: 'replace', startSeq: original.seq, endSeq: original.seq },
+      sourceEventSeqs: [original.seq],
+    })
+    session.append('compaction/prune', {
+      shadowedRange: { start: original.seq, end: original.seq },
+      shadowedSeqs: [original.seq],
+      shadowedTokenCount: 1,
+    })
+    const second = session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: { ...original.data.message, content: [{ type: 'text', text: 'more pruned' }] },
+    }, {
+      surfaceOp: { op: 'replace', startSeq: first.seq, endSeq: first.seq },
+      sourceEventSeqs: [first.seq],
+    })
+    session.append('compaction/prune', {
+      shadowedRange: { start: first.seq, end: first.seq },
+      shadowedSeqs: [first.seq],
+      shadowedTokenCount: 1,
+    })
+    const compactionId = brandString<CompactionId>('prune-checkpoint')
+    const start = session.append('compaction/start', { compactionId, turn: null })
+    const summary = session.append('compaction/summary', {
+      compactionId,
+      summary: [{ type: 'text', text: 'checkpoint' }],
+      rawOutput: [{ type: 'text', text: 'checkpoint' }],
+      llmStreamCall: true,
+      shadowedRange: { start: second.seq, end: second.seq },
+      shadowedSeqs: [second.seq],
+      shadowedTokenCount: 10,
+      provider: 'test',
+      model: 'test',
+    })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'checkpoint' }],
+      source: compactCheckpointSource(compactionId),
+    }), {
+      surfaceOp: { op: 'replace', startSeq: second.seq, endSeq: second.seq },
+      sourceEventSeqs: [start.seq, summary.seq, second.seq],
+    })
+    session.append('compaction/end', { compactionId, turn: null })
+    const query = new FakeQuery(session.snapshotEvents())
+    const page = await readHistory(query, SESSION_ID, summary.seq, undefined, QUERY_CONFIG)
+    expect(page).toContain('ORIGINAL-ONLY: the middle value is 417.')
+    expect(page).toContain(`showing cited original #${String(original.seq)}`)
+  })
+
   it('rejects a cursor from another checkpoint and a malformed cursor', async () => {
     const { session } = conversation()
     const first = compact(session, [...session.surface.nodes], 'checkpoint one', 'c1')
@@ -355,6 +401,8 @@ describe('history recall over compaction checkpoints', () => {
     await expect(readHistory(query, SESSION_ID, first.summarySeq, 'not-a-cursor', QUERY_CONFIG))
       .rejects.toMatchObject({ code: 'HISTORY_CURSOR_INVALID' })
     await expect(readHistory(query, SESSION_ID, first.summarySeq, encodeCursorFor(999), QUERY_CONFIG))
+      .rejects.toMatchObject({ code: 'HISTORY_CURSOR_INVALID' })
+    await expect(readHistory(query, SESSION_ID, first.summarySeq, 'a'.repeat(5_000), QUERY_CONFIG))
       .rejects.toMatchObject({ code: 'HISTORY_CURSOR_INVALID' })
   })
 
@@ -391,5 +439,3 @@ describe('history recall over compaction checkpoints', () => {
 function encodeCursorFor(seq: number): string {
   return Buffer.from(JSON.stringify({ v: 1, c: seq, s: 1, o: 0 }), 'utf8').toString('base64url')
 }
-
-

@@ -4,7 +4,7 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import type { CompactionId } from '@deepseek-ai/dsh-compaction'
 import { compactCheckpointSource } from '@deepseek-ai/dsh-compaction/checkpoint'
 import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionSeq, type SessionId } from '@deepseek-ai/dsh-session'
+import { Session, SessionLogOffset, type SessionId } from '@deepseek-ai/dsh-session'
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import * as HistoryRecall from '../src/index.ts'
 
@@ -57,29 +57,11 @@ function fixture() {
 function fakeQuery(session: Session) {
   const events = session.snapshotEvents()
   return {
-    async listEvents() {
-      return events.map(event => ({
-        sessionId: SESSION_ID,
-        seq: event.seq,
-        type: event.type,
-        time: event.time,
-        surface: 'shadowed' as const,
-      }))
-    },
-    async readEvent(request: { seq: SessionSeq }) {
-      const target = events[request.seq]
-      if (target === undefined) throw new Error('missing')
-      return { session: session.header, inheritedEventCount: 0, target, events: [target], startSeq: request.seq, endSeq: request.seq }
-    },
-    async readEventRange(request: { seqs: readonly SessionSeq[] }) {
+    async readSession() {
       return {
         session: session.header,
-        inheritedEventCount: 0,
-        events: request.seqs.map((seq) => {
-          const event = events[seq]
-          if (event === undefined) throw new Error('missing')
-          return event
-        }),
+        inheritedEventCount: SessionLogOffset(0),
+        events: [...events],
       }
     },
   }

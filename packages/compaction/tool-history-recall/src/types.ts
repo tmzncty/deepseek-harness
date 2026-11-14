@@ -5,14 +5,8 @@
  * @module @deepseek-ai/dsh-tool-history-recall/types
  */
 
-import type { SessionEvent, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
-import type {
-  SessionEventRangeObservation,
-  SessionEventRangeRequest,
-  SessionEventRecord,
-  SessionEventWindow,
-  SessionEventReadRequest,
-} from '@deepseek-ai/dsh-session-query'
+import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 
 /** Deployment-owned bounds for recall reads and searches. */
 export interface HistoryRecallConfig {
@@ -74,26 +68,9 @@ export interface HistorySearchHit {
 }
 
 /**
- * The bounded session-query reads this consumer needs. `SessionQueryEngine`
+ * The one asynchronous session read this consumer needs. `SessionQueryEngine`
  * satisfies it; tests provide an in-memory implementation.
  */
 export interface RecallQuery {
-  listEvents(sessionId: SessionId): Promise<SessionEventRecord[]>
-  readEvent(request: SessionEventReadRequest, signal?: AbortSignal): Promise<SessionEventWindow>
-  readEventRange(
-    request: SessionEventRangeRequest,
-    signal?: AbortSignal,
-  ): Promise<SessionEventRangeObservation>
+  readSession(sessionId: SessionId, signal?: AbortSignal): Promise<SessionLogSnapshot>
 }
-
-/** A loaded sequential chunk of one checkpoint's rendered records. */
-export interface RecordChunk {
-  readonly records: readonly RenderedRecord[]
-  readonly nextIndex: number
-}
-
-/** Loader that pages through a checkpoint's shadowed seqs. */
-export type RecordLoader = (fromIndex: number) => Promise<RecordChunk>
-
-/** One durable summary event narrowed to its checkpoint payload. */
-export type CompactionSummaryEvent = SessionEvent<'compaction/summary'>

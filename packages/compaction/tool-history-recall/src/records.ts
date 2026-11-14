@@ -1,75 +1,63 @@
 /**
- * Turn a checkpoint's shadowed seqs into rendered transcript records through
- * bounded session-query reads.
+ * Turn a checkpoint's shadowed seqs into rendered transcript records from one
+ * already-loaded event array.
  *
  * @module @deepseek-ai/dsh-tool-history-recall/records
  */
 
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import { SessionQueryError } from '@deepseek-ai/dsh-session-query'
-import { readEvents } from './checkpoints.ts'
-import { evidenceMissing } from './errors.ts'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { evidenceInvalid, evidenceMissing } from './errors.ts'
 import { prunedSourceSeq, renderRecord } from './render.ts'
-import type { CompactionCheckpoint, RecallQuery, RenderedRecord } from './types.ts'
+import type { CompactionCheckpoint, RenderedRecord } from './types.ts'
 
-/** Records loaded per bounded range request. */
-export const RECORD_BATCH = 20
+/** Records rendered per page chunk. */
+const RECORD_BATCH = 20
+
+/** Maximum prune-citation hops followed from one shadowed replacement. */
+const MAX_PRUNE_HOPS = 8
 
 /**
- * Load and render the next records of one checkpoint.
- * @param query - bounded session-query reader.
- * @param sessionId - session that owns the checkpoint.
+ * Render the next records of one checkpoint.
+ * @param events - complete logged events in seq order.
  * @param checkpoint - checkpoint whose shadowed seqs are rendered.
- * @param fromIndex - first shadowed-seq position to load.
- * @param signal - optional cancellation.
- * @returns rendered records in shadowed-seq order.
+ * @param fromIndex - first shadowed-seq position to render.
+ * @returns rendered records in shadowed-seq order, plus the next index.
  * @throws when a requested original is absent or cannot carry a transcript.
  */
-export async function loadRecords(
-  query: RecallQuery,
-  sessionId: SessionId,
+export function loadRecordsFromEvents(
+  events: readonly SessionEvent[],
   checkpoint: CompactionCheckpoint,
   fromIndex: number,
-  signal?: AbortSignal,
-): Promise<readonly RenderedRecord[]> {
+): { records: readonly RenderedRecord[]; nextIndex: number } {
   const seqs = checkpoint.shadowedSeqs.slice(fromIndex, fromIndex + RECORD_BATCH)
-  if (seqs.length === 0) return []
-  let events: SessionEvent[]
-  try {
-    events = await readEvents(query, sessionId, seqs, signal)
-  } catch (error) {
-    if (error instanceof SessionQueryError && error.code === 'SESSION_QUERY_EVENT_NOT_FOUND') {
-      throw evidenceMissing(seqs)
-    }
-    throw error
-  }
+  if (seqs.length === 0) return { records: [], nextIndex: fromIndex }
   const bySeq = new Map<number, SessionEvent>(events.map(event => [event.seq, event]))
-  const extra = events
-    .map(event => prunedSourceSeq(event))
-    .filter((seq): seq is NonNullable<typeof seq> => seq !== undefined && !bySeq.has(seq))
-  if (extra.length > 0) {
-    try {
-      for (const event of await readEvents(query, sessionId, [...new Set(extra)].sort((left, right) => left - right), signal)) {
-        bySeq.set(event.seq, event)
-      }
-    } catch (error) {
-      if (error instanceof SessionQueryError && error.code === 'SESSION_QUERY_EVENT_NOT_FOUND') {
-        throw evidenceMissing(extra)
-      }
-      throw error
-    }
-  }
-  return seqs.map((seq) => {
+  const records = seqs.map((seq) => {
     const event = bySeq.get(seq)
     if (event === undefined) throw evidenceMissing([seq])
-    const source = prunedSourceSeq(event)
-    const original = source === undefined ? undefined : bySeq.get(source)
-    if (original === undefined) return renderRecord(event)
+    const original = resolveOriginal(bySeq, event)
+    if (original.seq === event.seq) return renderRecord(event)
     const rendered = renderRecord(original)
     return {
       seq,
-      label: `${rendered.label} · pruned replacement #${String(seq)}; showing cited original #${String(original.seq)}`,
+      label: `${rendered.label} 路 pruned replacement #${String(seq)}; showing cited original #${String(original.seq)}`,
       text: rendered.text,
     }
   })
+  return { records, nextIndex: fromIndex + records.length }
+}
+
+function resolveOriginal(bySeq: ReadonlyMap<number, SessionEvent>, event: SessionEvent): SessionEvent {
+  let current = event
+  const seen = new Set<number>([event.seq])
+  for (let hop = 0; hop < MAX_PRUNE_HOPS; hop += 1) {
+    const source = prunedSourceSeq(current)
+    if (source === undefined) return current
+    if (seen.has(source)) throw evidenceInvalid(event.seq, 'prune citation chain is cyclic')
+    seen.add(source)
+    const next = bySeq.get(source)
+    if (next === undefined) throw evidenceMissing([source])
+    current = next
+  }
+  throw evidenceInvalid(event.seq, `prune citation chain exceeds ${String(MAX_PRUNE_HOPS)} hops`)
 }

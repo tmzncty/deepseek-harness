@@ -28,7 +28,7 @@ interface PageInput {
   readonly seqs: readonly SessionSeq[]
   readonly cursor: RecallCursor | undefined
   readonly maxPageBytes: number
-  readonly load: (fromIndex: number) => Promise<readonly RenderedRecord[]>
+  readonly load: (fromIndex: number) => { records: readonly RenderedRecord[]; nextIndex: number }
 }
 
 /**
@@ -36,7 +36,7 @@ interface PageInput {
  * @param input - checkpoint, optional cursor, loader, and deployment bounds.
  * @returns page text and the cursor that resumes at the next unread character.
  */
-export async function renderPage(input: PageInput): Promise<{ text: string; next: RecallCursor | undefined }> {
+export function renderPage(input: PageInput): { text: string; next: RecallCursor | undefined } {
   const { checkpoint, seqs, cursor, maxPageBytes } = input
   const startIndex = cursor === undefined ? 0 : seqs.indexOf(cursor.s)
   if (startIndex === -1) {
@@ -61,9 +61,10 @@ export async function renderPage(input: PageInput): Promise<{ text: string; next
 
   while (index < seqs.length) {
     if (index >= loadedIndex + chunk.length) {
+      const loaded = input.load(index)
       loadedIndex = index
-      chunk = await input.load(index)
-      if (chunk.length === 0) break
+      chunk = loaded.records
+      if (loaded.nextIndex <= index) break
     }
     const record = chunk[index - loadedIndex]
     if (record === undefined) break
@@ -144,6 +145,7 @@ export function encodeCursor(cursor: RecallCursor): string {
  * @throws when the cursor is not this format or names invalid coordinates.
  */
 export function decodeCursor(value: string): RecallCursor {
+  if (value.length > 4_096) throw cursorInvalid('cursor text is longer than 4096 characters')
   let parsed: unknown
   try {
     parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))

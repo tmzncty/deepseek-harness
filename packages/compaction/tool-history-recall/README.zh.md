@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 摘要
 
-`dsh-tool-history-recall` 让模型列出本会话的压缩检查点、分页读取某个检查点遮蔽的精确原始事件，并在这些原文中按字面量检索。两个只读工具通过 `ctx.sessionQuery` 的有界分页读取访问仅追加的会话日志：压缩摘要仍是当前上下文，回读内容作为普通且已记录的工具体输出到达。读取按字节有界、可用游标续读；本包从不改写摘要、表面或请求前缀。
+`dsh-tool-history-recall` 让模型列出本会话的压缩检查点、分页读取某个检查点遮蔽的精确原始事件，并在这些原文中按字面量检索。两个只读工具每次调用通过 `ctx.sessionQuery` 异步观察一次仅追加的会话日志：压缩摘要仍是当前上下文，回读内容作为普通且已记录的工具体输出到达。模型可见读取按字节有界、可用游标续读；本包从不改写摘要、表面或请求前缀。
 
 ## 目录
 
@@ -89,7 +89,7 @@ kind: "package-reference"
 
 - [压缩](../compaction/README.zh.md) — 检查点约定、`shadowedRange` 与 `shadowedSeqs`。
 - [基础压缩后端](../compaction-basic/README.zh.md) — 写出本包所读检查点的交付后端。
-- [会话查询](../../session-query/session-query/README.zh.md) — 两个工具背后的有界精确读取服务。
+- [会话查询](../../session-query/session-query/README.zh.md) — 两个工具背后的异步会话观察服务。
 - [会话持久化](../../session/session-persistence/README.zh.md) — 重启后仍存在的持久日志。
 
 -----
@@ -147,6 +147,7 @@ Long sessions may replace older conversation with a compacted checkpoint. Use hi
 
 ## 已知限制与后续工作
 
+- **每次调用一份完整日志观察。** `ctx.sessionQuery.readSession` 目前会为一次工具调用物化完整逻辑日志；分页限制的是模型可见字节，不是该快照，因此超大日志的每次回读都会按其大小消耗内存。
 - **被 Spill 截断的工具结果从未进入日志。** `dsh-spill-policy` 可能在追加 `tool/result` 事件之前把超大的工具输出替换为预览与定位符。本包只能渲染进入会话日志的字节；被移除的中段在保留期清理前只能从 spill 文件取得。
 - **没有检查点页脚。** 检查点文本保持不变，因此模型从 `history_read` 的目录而不是摘要本身获知检查点 seq。增加确定性页脚属于单独的压缩格式决策。
 - **仅字面量检索。** 匹配不区分大小写且按字面量执行；没有正则、语义检索或对 JSON 工具结果的结构化查询。

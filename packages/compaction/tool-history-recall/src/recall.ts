@@ -1,14 +1,14 @@
 /**
- * Model-facing operations over bounded session-query reads.
+ * Model-facing operations over one asynchronous session-query observation.
  *
  * @module @deepseek-ai/dsh-tool-history-recall/recall
  */
 
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { listCheckpoints, readCheckpoint } from './checkpoints.ts'
+import { checkpointsFromEvents, findCheckpoint } from './checkpoints.ts'
 import { cursorInvalid } from './errors.ts'
 import { decodeCursor, renderPage } from './pagination.ts'
-import { loadRecords } from './records.ts'
+import { loadRecordsFromEvents } from './records.ts'
 import type {
   CompactionCheckpoint,
   RecallQuery,
@@ -29,8 +29,8 @@ export async function readCheckpointDirectory(
   limit: number,
   signal?: AbortSignal,
 ): Promise<string> {
-  const checkpoints = await listCheckpoints(query, sessionId, signal)
-  return formatDirectory(checkpoints, limit)
+  const log = await query.readSession(sessionId, signal)
+  return formatDirectory(checkpointsFromEvents(log.events), limit)
 }
 
 function formatDirectory(checkpoints: readonly CompactionCheckpoint[], limit: number): string {
@@ -71,22 +71,22 @@ export async function readHistory(
   config: ResolvedHistoryRecallConfig,
   signal?: AbortSignal,
 ): Promise<string> {
+  const log = await query.readSession(sessionId, signal)
   if (checkpointSeq === undefined) {
-    return readCheckpointDirectory(query, sessionId, config.maxListedCheckpoints, signal)
+    return formatDirectory(checkpointsFromEvents(log.events), config.maxListedCheckpoints)
   }
-  const checkpoint = await readCheckpoint(query, sessionId, checkpointSeq, signal)
+  const checkpoint = findCheckpoint(log.events, checkpointSeq)
   const cursor = cursorText === undefined ? undefined : decodeCursor(cursorText)
   if (cursor !== undefined && cursor.c !== checkpoint.summarySeq) {
     throw cursorInvalid(
       `the cursor belongs to checkpoint c${String(cursor.c)}, not c${String(checkpoint.summarySeq)}`,
     )
   }
-  const page = await renderPage({
+  return renderPage({
     checkpoint,
     seqs: checkpoint.shadowedSeqs,
     cursor,
     maxPageBytes: config.maxPageBytes,
-    load: fromIndex => loadRecords(query, sessionId, checkpoint, fromIndex, signal),
-  })
-  return page.text
+    load: fromIndex => loadRecordsFromEvents(log.events, checkpoint, fromIndex),
+  }).text
 }
