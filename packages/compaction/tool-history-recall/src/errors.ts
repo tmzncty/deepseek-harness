@@ -53,3 +53,11 @@ export function pageBudgetTooSmall(maxPageBytes: number): HarnessError {
     'HISTORY_PAGE_BUDGET_TOO_SMALL',
   )
 }
+
+/** The internal page loader violated its contiguous-record contract. */
+export function pageLoaderInvalid(detail: string): HarnessError {
+  return new HarnessError(
+    `history recall page loader returned an invalid batch: ${detail}`,
+    'HISTORY_PAGE_LOAD_INVALID',
+  )
+}

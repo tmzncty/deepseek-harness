@@ -7,7 +7,7 @@
 import { Buffer } from 'node:buffer'
 import type { SessionSeq } from '@deepseek-ai/dsh-session'
 import { SessionSeq as seqOf } from '@deepseek-ai/dsh-session'
-import { cursorInvalid, pageBudgetTooSmall } from './errors.ts'
+import { cursorInvalid, pageBudgetTooSmall, pageLoaderInvalid } from './errors.ts'
 import type {
   CompactionCheckpoint,
   RenderedRecord,
@@ -62,12 +62,16 @@ export function renderPage(input: PageInput): { text: string; next: RecallCursor
   while (index < seqs.length) {
     if (index >= loadedIndex + chunk.length) {
       const loaded = input.load(index)
+      if (loaded.nextIndex <= index) {
+        throw pageLoaderInvalid(`batch at ${String(index)} did not advance (next ${String(loaded.nextIndex)})`)
+      }
       loadedIndex = index
       chunk = loaded.records
-      if (loaded.nextIndex <= index) break
     }
     const record = chunk[index - loadedIndex]
-    if (record === undefined) break
+    if (record === undefined) {
+      throw pageLoaderInvalid(`batch at ${String(index)} omitted the record at that index`)
+    }
     if (record.seq !== seqs[index]) {
       throw cursorInvalid(`event #${String(record.seq)} does not match the checkpoint's span at #${String(seqs[index])}`)
     }
@@ -100,11 +104,6 @@ export function renderPage(input: PageInput): { text: string; next: RecallCursor
       break
     }
     const slice = truncateToBytes(text, available)
-    if (slice.text === '') {
-      if (body === '') throw pageBudgetTooSmall(maxPageBytes)
-      next = { v: 1, c: checkpoint.summarySeq, s: record.seq, o: offset }
-      break
-    }
     body += separator + prefix + slice.text
     next = {
       v: 1,
@@ -115,18 +114,10 @@ export function renderPage(input: PageInput): { text: string; next: RecallCursor
     break
   }
 
-  if (next === undefined && index < seqs.length) {
-    const seq = seqs[index]
-    if (seq !== undefined) next = { v: 1, c: checkpoint.summarySeq, s: seq, o: 0 }
-  }
   const footer = next === undefined
     ? `\n\nEnd of checkpoint c${String(checkpoint.summarySeq)}.`
     : `\n\nContinues at event #${String(next.s)}, character ${String(next.o)}. Pass checkpoint ${String(next.c)} with cursor ${encodeCursor(next)} to read on.`
-  const text = header + body + footer
-  if (Buffer.byteLength(text, 'utf8') > maxPageBytes) {
-    throw pageBudgetTooSmall(maxPageBytes)
-  }
-  return { text, next }
+  return { text: header + body + footer, next }
 }
 
 /**

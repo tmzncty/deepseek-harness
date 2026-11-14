@@ -71,7 +71,6 @@ export async function searchHistory(
     while (fromIndex < checkpoint.shadowedSeqs.length) {
       if (signal?.aborted === true) signal.throwIfAborted()
       const loaded = loadRecordsFromEvents(bySeq, checkpoint, fromIndex)
-      if (loaded.records.length === 0) break
       fromIndex = loaded.nextIndex
       for (const record of loaded.records) {
         const bytes = Buffer.byteLength(record.text, 'utf8')
