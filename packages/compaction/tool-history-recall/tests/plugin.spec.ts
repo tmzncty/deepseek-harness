@@ -96,6 +96,12 @@ function harness() {
   return { tools, sections, exec, summarySeq }
 }
 
+function toolNamed(tools: readonly ToolDefinition[], name: string): ToolDefinition {
+  const tool = tools.find(candidate => candidate.name === name)
+  if (tool === undefined) throw new Error(`harness did not register ${name}`)
+  return tool
+}
+
 describe('history recall plugin', () => {
   it('registers two read-only tools and one prompt section', () => {
     const { tools, sections } = harness()
@@ -124,5 +130,53 @@ describe('history recall plugin', () => {
     const promptChars = sections[0]?.text.length ?? 0
     const schemaChars = tools.reduce((total, tool) => total + JSON.stringify(tool.parameters).length, 0)
     expect(promptChars + schemaChars).toBeLessThan(4_000)
+  })
+
+  it('renders checkpoint text and presents both tools at call time', () => {
+    const { tools } = harness()
+    const read = toolNamed(tools, 'history_read')
+    const search = toolNamed(tools, 'history_search')
+
+    expect(read.output.render({}, 'PAGE TEXT')).toEqual([{ type: 'text', text: 'PAGE TEXT' }])
+    expect(read.presentCall?.({})).toMatchObject({ card: 'generic', kind: 'read', title: 'List compacted history' })
+    expect(read.presentCall?.({ checkpoint: 7, cursor: 'abc' })).toMatchObject({
+      card: 'generic',
+      kind: 'read',
+      title: 'Read compacted history c7',
+    })
+    expect(search.presentCall?.({ query: 'needle' })).toMatchObject({
+      card: 'generic',
+      kind: 'search',
+      title: 'Search compacted history',
+      rawInput: 'needle',
+    })
+  })
+
+  it('searches compacted originals through the registered tool', async () => {
+    const { tools, exec } = harness()
+    const found = await toolNamed(tools, 'history_search').execute({ query: 'C: free' }, exec)
+    expect(String(found)).toContain('match(es)')
+    expect(String(found)).toContain('CONSTRAINT')
+  })
+
+  it('rejects a recall request that has no caller session', async () => {
+    const { tools } = harness()
+    const unbound = { signal: new AbortController().signal } as unknown as ToolRunContext
+    await expect(toolNamed(tools, 'history_read').execute({}, unbound))
+      .rejects.toMatchObject({ code: 'HISTORY_RECALL_NO_SESSION' })
+    await expect(toolNamed(tools, 'history_search').execute({ query: 'C:' }, unbound))
+      .rejects.toMatchObject({ code: 'HISTORY_RECALL_NO_SESSION' })
+  })
+
+  it('rejects a cursor that arrives without the checkpoint it belongs to', async () => {
+    const { tools, exec } = harness()
+    await expect(toolNamed(tools, 'history_read').execute({ cursor: 'abc' }, exec))
+      .rejects.toMatchObject({ code: 'HISTORY_CURSOR_INVALID' })
+  })
+
+  it('rejects an out-of-range deployment bound while registering', () => {
+    const unbound = {} as unknown as Context
+    expect(() => HistoryRecall.apply(unbound, { maxPageBytes: 512 })).toThrow(TypeError)
+    expect(() => HistoryRecall.apply(unbound, { maxListedCheckpoints: 65 })).toThrow(/maxListedCheckpoints/u)
   })
 })
