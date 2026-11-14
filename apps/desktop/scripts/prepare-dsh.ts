@@ -2,7 +2,7 @@
 
 import { resolveMacOSSignatureCacheDirectory } from './macos-signature-cache-directory.mjs'
 import { packagingStep } from './packaging-step.mjs'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -46,6 +46,36 @@ const PNPM_BUILD_STATE = BUILD_PATHS.dshPnpm
 const PACKAGE_SET_ROOT = BUILD_PATHS.packageSet
 const NODE = join(BUILD_PATHS.electron, process.platform === 'win32' ? 'electron.exe' : 'Electron.app/Contents/MacOS/Electron')
 const PNPM = join(RUNTIME_ROOT, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.mjs')
+
+/**
+ * Keep the private packaging cache writable by the bundled Electron/Pnpm
+ * process on Windows. Electron can inherit a Low mandatory integrity label
+ * from a checkout on another volume; the pnpm store is Medium, so the child
+ * would otherwise fail with EPERM before any package is installed. Relabel
+ * only this cache, never a user or system directory.
+ */
+function ensureWindowsBuildCacheIntegrity(): void {
+  if (process.platform !== 'win32') return
+  mkdirSync(BUILD_PATHS.root, { recursive: true })
+  try {
+    execFileSync('icacls', [
+      BUILD_PATHS.root,
+      '/setintegritylevel',
+      '(OI)(CI)Medium',
+      '/T',
+      '/C',
+      '/Q',
+    ], { stdio: 'pipe' })
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `desktop runtime: cannot set Medium integrity on the private build cache ${BUILD_PATHS.root}; `
+      + `the bundled Electron/pnpm child would fail with EPERM. Detail: ${detail}`,
+    )
+  }
+}
+
+ensureWindowsBuildCacheIntegrity()
 
 function manifestVersion(path: string, subject: string): string {
   const manifest = JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown }
