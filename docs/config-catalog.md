@@ -3975,7 +3975,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-system-prompt`
 
-- `source`: [`packages/core/system-prompt/src/index.ts:265`](../packages/core/system-prompt/src/index.ts)
+- `source`: [`packages/core/system-prompt/src/index.ts:266`](../packages/core/system-prompt/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.personaPrefix} for its contract). */
@@ -4438,6 +4438,29 @@ export interface Config {
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-goal -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tool-history-recall -->
+<a id="deepseek-aidsh-tool-history-recall"></a>
+
+## `@deepseek-ai/dsh-tool-history-recall`
+
+- `inject`: `tools` · `systemPrompt` · `sessionQuery`
+- `source`: [`packages/compaction/tool-history-recall/src/types.ts:12`](../packages/compaction/tool-history-recall/src/types.ts)
+
+```ts config-catalog
+/** Deployment-owned bounds for recall reads and searches. */
+export interface HistoryRecallConfig {
+  /** Maximum UTF-8 bytes in one transcript page. Defaults to 16384. */
+  maxPageBytes?: number
+  /** Maximum literal-search hits returned by one call. Defaults to 20. */
+  maxSearchHits?: number
+  /** Maximum rendered bytes one search scans. Defaults to 2000000. */
+  maxSearchBytes?: number
+  /** Maximum checkpoints listed in one page header. Defaults to 8. */
+  maxListedCheckpoints?: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-history-recall -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tool-jobs -->
 <a id="deepseek-aidsh-tool-jobs"></a>

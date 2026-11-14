@@ -570,7 +570,7 @@ describe('execution through the bash seam', () => {
       stderr: { text: '', truncated: false },
     })
     const result = await call(ctx, 'pwsh', { command: 'noisy', description: 'noise' })
-    expect(text(result)).toBe('tail\n[output truncated; full output: /spill/out.log]')
+    expect(text(result)).toBe('[output truncated; full output: /spill/out.log]\n\ntail')
 
     bash.handler = () => runResult('', { timedOut: true, exitCode: null, signal: 'SIGTERM', timeoutMs: 500 })
     const timedOut = await call(ctx, 'pwsh', { command: 'slow', description: 'slow' })
@@ -585,7 +585,7 @@ describe('execution through the bash seam', () => {
       stderr: { text: '', truncated: false },
     })
     const result = await call(ctx, 'pwsh', { command: 'noisy', description: 'noise' })
-    expect(text(result)).toBe('tail\n[output truncated; full output: (unavailable)]')
+    expect(text(result)).toBe('[output truncated; full output: (unavailable)]\n\ntail')
   })
 
   it('translates an aborted run into the TOOL_ABORTED HarnessError', async () => {

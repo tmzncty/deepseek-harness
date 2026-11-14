@@ -33,6 +33,7 @@ kind: "package-reference"
 |---|---|
 | `listSessions()` | 每个逻辑会话，最新的在前，带 `live` 与 `persisted` 可用性标志及可选 `formatStatus` |
 | `readSession(id)` | 经过回放校验的完整原始事件日志，且不会让该会话变为实时 |
+| `readRawLog(id)` | 供只读扫描使用的浅层借用原始日志；不做回放校验、不逐事件克隆 |
 | `filterSessions(filters)` | 匹配 AND 连接的元数据与可用性谓词的会话 |
 | `filterEvents(id, filters)` | 匹配元数据与字面文本谓词的语义事件文档 |
 | `readTitleSnapshots(ids)` | 每个会话的最新折叠标题，绑定到其来源 header |
@@ -42,7 +43,7 @@ kind: "package-reference"
 | `traceEvent(request)` | 一个事件的位置替换与被引用源事件关系 |
 | `searchSessions(request)` / `searchEvents(request)` | 全文搜索分页结果，由挂载的后端实现 |
 
-不带正文的记录只公开 `SessionHeader.isSeeded`。返回事件正文的读取（`readSession`、`readSurface`、`readEvent`）与保留的 `SessionObservation` 值还携带精确 `inheritedEventCount`，因此调用方无需从日志推断切点即可区分继承事件与自有事件。
+不带正文的记录只公开 `SessionHeader.isSeeded`。返回事件正文的读取（`readSession`、`readRawLog`、`readSurface`、`readEvent`）与保留的 `SessionObservation` 值还携带精确 `inheritedEventCount`，因此调用方无需从日志推断切点即可区分继承事件与自有事件。
 
 ### 过滤器
 

@@ -3354,6 +3354,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['when persistence, header compatibility, or replay validation fails.'],
       },
       {
+        signature: 'async readRawLog(sessionId: SessionId, signal?: AbortSignal): Promise<SessionRawLogSnapshot>',
+        description: 'Read one complete raw event log without replay validation or cloning every event. This is the bounded-copy path for read-only scans such as checkpoint discovery and exact history recall: a persisted log is read once through a read handle and its shared-frozen events are returned; a live log reuses the Session\'s frozen snapshot. Call readSession when the caller needs an owned, replay-validated copy.',
+        parameters: [{ name: 'sessionId', description: 'live or persisted session id to read.' }, { name: 'signal', description: 'optional cancellation for persisted source reads.' }],
+        returns: 'borrowed raw events and the header from the same observation.',
+        throws: ['when the session is absent or the persistence read fails.'],
+      },
+      {
         signature: 'async filterSessions( filters: readonly SessionResultFilter[], signal?: AbortSignal, ): Promise<SessionRecord[]>',
         description: 'Filter the complete logical corpus with provider-independent predicates.',
         parameters: [{ name: 'filters', description: 'ANDed session metadata and availability clauses.' }, { name: 'signal', description: 'optional cancellation for persistence listing.' }],
@@ -9373,6 +9380,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionQueuedItem',
     declaration: 'export interface SessionQueuedItem {\n    readonly id: MessageId;\n    readonly placement: \'queued\' | \'steering\' | \'context\';\n    readonly rpcId?: SessionRequestId;\n    readonly content: readonly JsonValue[];\n}',
+  },
+  {
+    name: 'SessionRawLogSnapshot',
+    declaration: 'export interface SessionRawLogSnapshot {\n    session: SessionHeader;\n    inheritedEventCount: SessionLogOffset;\n    events: readonly SessionEvent[];\n    capturedThroughSeq: OptionalSessionSeq;\n}',
   },
   {
     name: 'SessionReadAction',

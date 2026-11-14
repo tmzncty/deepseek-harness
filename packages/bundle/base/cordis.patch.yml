@@ -444,6 +444,11 @@
     - id: image-offload
       name: '@deepseek-ai/dsh-compaction-image-offload'
 
+    # Model-facing recovery of the original events a compaction checkpoint
+    # shadows. Reads are bounded, exact, and paginated through session-query.
+    - id: tool-history-recall
+      name: '@deepseek-ai/dsh-tool-history-recall'
+
     - id: tool-todo
       name: '@deepseek-ai/dsh-tool-todo'
       config:

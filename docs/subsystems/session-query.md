@@ -431,6 +431,20 @@ listSessions(signal?: AbortSignal): Promise<SessionRecord[]>
 async readSession(sessionId: SessionId): Promise<SessionLogSnapshot>
 
 /**
+ * Read one complete raw event log without replay validation or cloning every
+ * event. This is the bounded-copy path for read-only scans such as checkpoint
+ * discovery and exact history recall: a persisted log is read once through a
+ * read handle and its shared-frozen events are returned; a live log reuses
+ * the Session's frozen snapshot. Call {@link readSession} when the caller
+ * needs an owned, replay-validated copy.
+ * @param sessionId - live or persisted session id to read.
+ * @param signal - optional cancellation for persisted source reads.
+ * @returns borrowed raw events and the header from the same observation.
+ * @throws when the session is absent or the persistence read fails.
+ */
+async readRawLog(sessionId: SessionId, signal?: AbortSignal): Promise<SessionRawLogSnapshot>
+
+/**
  * Filter the complete logical corpus with provider-independent predicates.
  * @param filters - ANDed session metadata and availability clauses.
  * @param signal - optional cancellation for persistence listing.

@@ -17,6 +17,7 @@ import type {
   SessionHandle,
   SessionHandleReadOptions,
   SessionHandleReadResult,
+  SessionPersistenceOpenOptions,
   SessionPersistenceSnapshot,
 } from '@deepseek-ai/dsh-session-persistence'
 import SessionQueryEngine, {
@@ -120,6 +121,7 @@ class TestPersistence extends SessionPersistence {
   static listFailure: unknown
   static listOverride: ((signal?: AbortSignal) => Promise<SessionPersistenceSnapshot[]>) | undefined
   static readFailure: unknown
+  static openFailure: unknown
   static readEffect: (() => void) | undefined
   static readOverride: ((
     id: SessionIdType,
@@ -130,12 +132,14 @@ class TestPersistence extends SessionPersistence {
   static readCalls: SessionIdType[] = []
   static listSignals: Array<AbortSignal | undefined> = []
   static readSignals: Array<AbortSignal | undefined> = []
+  static openSignals: Array<AbortSignal | undefined> = []
 
   static reset(entries: readonly { meta: SessionHeader; events: SessionEvent[] }[] = []): void {
     this.entries = new Map(entries.map(entry => [entry.meta.id, structuredClone(entry)]))
     this.listFailure = undefined
     this.listOverride = undefined
     this.readFailure = undefined
+    this.openFailure = undefined
     this.readEffect = undefined
     this.readOverride = undefined
     this.afterList = undefined
@@ -143,6 +147,7 @@ class TestPersistence extends SessionPersistence {
     this.readCalls = []
     this.listSignals = []
     this.readSignals = []
+    this.openSignals = []
   }
 
   create(header: SessionHeader): Promise<SessionHandle> {
@@ -153,7 +158,13 @@ class TestPersistence extends SessionPersistence {
   // Appends are durable on resolution here; nothing buffers, so the service-wide flush is a no-op.
   async flush(): Promise<void> {}
 
-  open(id: SessionIdType, access: SessionAccess): Promise<SessionHandle> {
+  open(
+    id: SessionIdType,
+    access: SessionAccess,
+    options?: SessionPersistenceOpenOptions,
+  ): Promise<SessionHandle> {
+    TestPersistence.openSignals.push(options?.signal)
+    if (TestPersistence.openFailure !== undefined) return rejectUnknown(TestPersistence.openFailure)
     const entry = TestPersistence.entries.get(id)
     if (entry === undefined) return Promise.reject(new SessionPersistenceNotFoundError(id))
     return Promise.resolve(new TestHandle(id, structuredClone(entry.meta), access))
@@ -499,6 +510,96 @@ describe('session-query exact reads', () => {
     Object.assign(snapshot.events[0]!, { time: 999 })
     expect(TestPersistence.entries.get(valid.id)?.events[0]?.time).toBe(10)
     await expect(ctx.sessionQuery.readSession(corrupt.id)).rejects.toThrow('seed event at index 0 has seq 1')
+  })
+
+  it('reads a raw log for scanning without replay-cloning every event', async () => {
+    const durable = header('raw-log', 2)
+    const durableEvents = eventLog('raw')
+    TestPersistence.reset([{ meta: durable, events: durableEvents }])
+    const ctx = await liveContext()
+    await ctx.plugin(TestPersistence)
+
+    const persisted = await ctx.sessionQuery.readRawLog(durable.id)
+    expect(persisted).toEqual({
+      session: durable,
+      inheritedEventCount: SessionLogOffset(0),
+      events: durableEvents,
+      capturedThroughSeq: durableEvents.at(-1)?.seq ?? null,
+    })
+    expect(TestPersistence.readCalls).toEqual([durable.id])
+
+    const live = ctx.sessions.create(brandString<SessionId>('raw-live'), { seed: eventLog('live'), meta: { createdAt: 1 } })
+    const liveSnapshot = await ctx.sessionQuery.readRawLog(live.id)
+    expect(liveSnapshot.events).toEqual(live.snapshotEvents())
+    expect(liveSnapshot.capturedThroughSeq).toBe(live.seq - 1)
+
+    await expect(ctx.sessionQuery.readRawLog(brandString<SessionId>('missing-raw')))
+      .rejects.toMatchObject({ code: 'SESSION_QUERY_SESSION_NOT_FOUND' })
+    const aborted = new AbortController()
+    aborted.abort()
+    await expect(ctx.sessionQuery.readRawLog(durable.id, aborted.signal)).rejects.toThrow()
+  })
+
+  it('reports a null cut for a live session that has logged nothing yet', async () => {
+    const ctx = await liveContext()
+    const empty = ctx.sessions.create(brandString<SessionId>('raw-empty-live'), { meta: { createdAt: 1 } })
+
+    const snapshot = await ctx.sessionQuery.readRawLog(empty.id)
+    expect(snapshot.session.id).toBe(empty.id)
+    expect(snapshot.events).toEqual([])
+    expect(snapshot.capturedThroughSeq).toBeNull()
+  })
+
+  it('reports a null cut for a persisted session whose log is empty', async () => {
+    const durable = header('raw-empty-persisted', 2)
+    TestPersistence.reset([{ meta: durable, events: [] }])
+    const ctx = await liveContext()
+    await ctx.plugin(TestPersistence)
+
+    const snapshot = await ctx.sessionQuery.readRawLog(durable.id)
+    expect(snapshot.events).toEqual([])
+    expect(snapshot.capturedThroughSeq).toBeNull()
+  })
+
+  it('reports a raw read as not found when no persistence service is mounted', async () => {
+    const ctx = await liveContext()
+    await expect(ctx.sessionQuery.readRawLog(brandString<SessionId>('raw-no-persistence')))
+      .rejects.toMatchObject({ code: 'SESSION_QUERY_SESSION_NOT_FOUND' })
+  })
+
+  it('forwards the caller signal into the persisted open and read', async () => {
+    const durable = header('raw-signal', 2)
+    const durableEvents = eventLog('raw-signal')
+    TestPersistence.reset([{ meta: durable, events: durableEvents }])
+    const ctx = await liveContext()
+    await ctx.plugin(TestPersistence)
+    const controller = new AbortController()
+
+    const snapshot = await ctx.sessionQuery.readRawLog(durable.id, controller.signal)
+    expect(snapshot.events).toEqual(durableEvents)
+    expect(TestPersistence.openSignals).toEqual([controller.signal])
+    expect(TestPersistence.readSignals).toEqual([controller.signal])
+  })
+
+  it('rethrows a persisted open failure that is not a missing session', async () => {
+    const durable = header('raw-open-failure', 2)
+    TestPersistence.reset([{ meta: durable, events: eventLog('raw') }])
+    const ctx = await liveContext()
+    await ctx.plugin(TestPersistence)
+    const failure = new Error('disk detached during open')
+    TestPersistence.openFailure = failure
+
+    await expect(ctx.sessionQuery.readRawLog(durable.id)).rejects.toBe(failure)
+  })
+
+  it('inspects live domain state through the engine facade', async () => {
+    const ctx = await liveContext()
+    const session = ctx.sessions.create(brandString<SessionId>('inspect-live'), {
+      seed: eventLog('inspect me'),
+      meta: { createdAt: 1 },
+    })
+
+    await expect(ctx.sessionQuery.inspectSession(session.id, live => live.seq)).resolves.toBe(session.seq)
   })
 
   it('prefers a live owner that attaches while its persisted prefix is inspected', async () => {

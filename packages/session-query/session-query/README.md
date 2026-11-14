@@ -33,6 +33,7 @@ Use `ctx.sessionQuery` from application code when you need to read or search ses
 |---|---|
 | `listSessions()` | Every logical session, newest first, with `live` and `persisted` availability flags and optional `formatStatus` |
 | `readSession(id)` | The complete replay-validated raw event log, without making the session live |
+| `readRawLog(id)` | A shallow borrowed raw log for read-only scans; no replay validation or per-event clone |
 | `filterSessions(filters)` | Sessions matching ANDed metadata and availability predicates |
 | `filterEvents(id, filters)` | Semantic event documents matching metadata and literal-text predicates |
 | `readTitleSnapshots(ids)` | The latest folded title per session, bound to its source header |

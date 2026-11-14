@@ -16,10 +16,10 @@ import { escalationHintMarker, sandboxDenialMarker } from '@deepseek-ai/dsh-sand
 
 /* jscpd:ignore-start -- deliberate twin of dsh-tool-bash/render.ts (Agent Note). */
 
-/** Append the truncation notice (with the full-output spill path) to a stream's text. */
+/** Prefix the truncation notice (with the full-output spill path) so the saved-evidence handle survives tail truncation. */
 function streamText(output: CollectedOutput): string {
   if (!output.truncated) return output.text
-  return `${output.text}\n[output truncated; full output: ${output.spillPath ?? '(unavailable)'}]`
+  return `[output truncated; full output: ${output.spillPath ?? '(unavailable)'}]\n\n${output.text}`
 }
 
 /** The renderable foreground result shape (the schema-derived value, no `kind`). */

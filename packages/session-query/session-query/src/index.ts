@@ -15,6 +15,8 @@ import {
 } from '@deepseek-ai/dsh-session'
 import { foldSessionTitle } from '@deepseek-ai/dsh-session-title'
 import type { SessionTitleSnapshot } from '@deepseek-ai/dsh-session-title'
+import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
+import type { SessionHandle } from '@deepseek-ai/dsh-session-persistence'
 import type {
   SessionEventResultFilter,
   SessionEventSearchPage,
@@ -27,6 +29,7 @@ import type {
   SessionEventWindow,
   SessionLineageTrace,
   SessionLogSnapshot,
+  SessionRawLogSnapshot,
   SessionRecord,
   SessionResultFilter,
   SessionSearchExecContext,
@@ -206,6 +209,66 @@ export abstract class SessionQueryEngine extends Service {
       session: structuredClone(loaded.header),
       inheritedEventCount: loaded.inheritedEventCount,
       events: loaded.events.map(snapshotSessionEvent),
+    }
+  }
+
+  /**
+   * Read one complete raw event log without replay validation or cloning every
+   * event. This is the bounded-copy path for read-only scans such as checkpoint
+   * discovery and exact history recall: a persisted log is read once through a
+   * read handle and its shared-frozen events are returned; a live log reuses
+   * the Session's frozen snapshot. Call {@link readSession} when the caller
+   * needs an owned, replay-validated copy.
+   * @param sessionId - live or persisted session id to read.
+   * @param signal - optional cancellation for persisted source reads.
+   * @returns borrowed raw events and the header from the same observation.
+   * @throws when the session is absent or the persistence read fails.
+   */
+  async readRawLog(sessionId: SessionId, signal?: AbortSignal): Promise<SessionRawLogSnapshot> {
+    signal?.throwIfAborted()
+    const live = this.ctx.sessions.get(sessionId)
+    if (live !== undefined) {
+      // oxlint-disable-next-line typescript/no-deprecated -- frozen full snapshot is the raw-read path
+      const events = live.snapshotEvents()
+      return {
+        session: structuredClone(live.header),
+        inheritedEventCount: live.inheritedEventCount,
+        events,
+        capturedThroughSeq: events.at(-1)?.seq ?? null,
+      }
+    }
+    const persistence = this.ctx.get('sessionPersistence')
+    if (persistence === undefined) {
+      throw new SessionQueryError(
+        `session "${sessionId}" was not found`,
+        'SESSION_QUERY_SESSION_NOT_FOUND',
+      )
+    }
+    let handle: SessionHandle
+    try {
+      handle = await persistence.open(sessionId, 'read', signal === undefined ? undefined : { signal })
+    } catch (error: unknown) {
+      if (error instanceof SessionPersistenceNotFoundError) {
+        throw new SessionQueryError(
+          `session "${sessionId}" was not found`,
+          'SESSION_QUERY_SESSION_NOT_FOUND',
+          { cause: error },
+        )
+      }
+      throw error
+    }
+    try {
+      signal?.throwIfAborted()
+      const result = await handle.read(0, Number.MAX_SAFE_INTEGER, signal === undefined ? undefined : { signal })
+      signal?.throwIfAborted()
+      return {
+        session: structuredClone(handle.header),
+        inheritedEventCount: handle.inheritedEventCount,
+        events: result.events,
+        capturedThroughSeq: result.events.at(-1)?.seq ?? null,
+      }
+    } finally {
+      await handle.close()
     }
   }
 
