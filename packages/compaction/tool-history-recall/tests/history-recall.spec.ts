@@ -19,6 +19,7 @@ import {
   SessionLogOffset,
   SessionSeq,
   type SessionEvent,
+  type SessionHeader,
   type SessionId,
 } from '@deepseek-ai/dsh-session'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -173,9 +174,9 @@ class FakeQuery implements RecallQuery {
   }
 }
 
-function header() {
+function header(): SessionHeader {
   return {
-    version: SESSION_FORMAT_VERSION,
+    version: SESSION_FORMAT_VERSION as SessionHeader['version'],
     id: SESSION_ID,
     createdAt: 1,
     isSeeded: false,
