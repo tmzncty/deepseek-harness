@@ -1,14 +1,32 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { CompactionId } from '@deepseek-ai/dsh-compaction'
 import { compactCheckpointSource } from '@deepseek-ai/dsh-compaction/checkpoint'
-import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionLogOffset, type SessionId } from '@deepseek-ai/dsh-session'
+import { createMessage, createToolResultMessage, createUserMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
+import { Session, SessionLogOffset, type SessionId, type SessionSeq } from '@deepseek-ai/dsh-session'
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import * as HistoryRecall from '../src/index.ts'
 
 const SESSION_ID = brandString<SessionId>('plugin-session')
+
+/** Temp paths created by one case; removed afterwards. */
+const temporary: string[] = []
+afterEach(async () => {
+  for (const path of temporary.splice(0)) await rm(path, { recursive: true, force: true })
+})
+
+/** A spill artifact under a subprocess-shaped temp directory. */
+async function spillFile(body: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-subprocess-'))
+  temporary.push(root)
+  const path = join(root, 'stdout.log')
+  await writeFile(path, body, 'utf8')
+  return path
+}
 
 function fixture() {
   const session = Session.create(SESSION_ID)
@@ -68,8 +86,26 @@ function fakeQuery(session: Session) {
   }
 }
 
-function harness() {
-  const { session, summarySeq } = fixture()
+/** One session whose single tool result names a saved full-output spill path. */
+function spillSession(spillPath: string): Session {
+  const session = Session.create(SESSION_ID)
+  session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 1 })
+  const callId = brandString<ToolCallId>('spill-call')
+  session.append('tool/call', { turn: 1, step: 1, callId, name: 'pwsh', arguments: '{}' })
+  session.append('tool/result', {
+    turn: 1,
+    step: 1,
+    message: createToolResultMessage({
+      callId,
+      content: [{ type: 'text', text: `[output truncated; full output: ${spillPath}]\n\nretained tail` }],
+      isError: false,
+    }),
+  }, { surfaceOp: 'append' })
+  return session
+}
+
+function harnessFor(session: Session, summarySeq?: SessionSeq) {
   const tools: ToolDefinition[] = []
   const sections: Array<{ name: string; text: string }> = []
   const ctx = {
@@ -90,10 +126,15 @@ function harness() {
   } as unknown as Context
   HistoryRecall.apply(ctx, {})
   const exec = {
-    agent: { session: { id: SESSION_ID } },
+    agent: { session: { id: session.id } },
     signal: new AbortController().signal,
   } as unknown as ToolRunContext
   return { tools, sections, exec, summarySeq }
+}
+
+function harness() {
+  const { session, summarySeq } = fixture()
+  return harnessFor(session, summarySeq)
 }
 
 function toolNamed(tools: readonly ToolDefinition[], name: string): ToolDefinition {
@@ -178,5 +219,44 @@ describe('history recall plugin', () => {
     const unbound = {} as unknown as Context
     expect(() => HistoryRecall.apply(unbound, { maxPageBytes: 512 })).toThrow(TypeError)
     expect(() => HistoryRecall.apply(unbound, { maxListedCheckpoints: 65 })).toThrow(/maxListedCheckpoints/u)
+  })
+})
+
+describe('saved evidence tool wiring', () => {
+  it('pages a session-named spill artifact through history_read', async () => {
+    const file = await spillFile(`EVIDENCE-BODY${'x'.repeat(20_000)}TAIL-MARKER`)
+    const { tools, exec } = harnessFor(spillSession(file))
+    const read = toolNamed(tools, 'history_read')
+
+    const first = String(await read.execute({ evidence: file }, exec))
+    expect(first).toContain('Saved tool output evidence')
+    expect(first).toContain('Continues at offset')
+    const next = Number(/Continues at offset (\d+)/u.exec(first)?.[1])
+    expect(Number.isSafeInteger(next)).toBe(true)
+
+    const later = String(await read.execute({ evidence: file, evidenceOffset: next }, exec))
+    expect(later).toContain(`at offset ${String(next)}:`)
+    expect(later).toContain('TAIL-MARKER')
+  })
+
+  it('rejects saved evidence combined with a checkpoint or a cursor', async () => {
+    const file = await spillFile('evidence-body')
+    const { tools, exec } = harnessFor(spillSession(file))
+    const read = toolNamed(tools, 'history_read')
+
+    await expect(read.execute({ evidence: file, checkpoint: 1 }, exec))
+      .rejects.toMatchObject({ code: 'HISTORY_EVIDENCE_INVALID' })
+    await expect(read.execute({ evidence: file, cursor: 'eyJ2IjoxfQ' }, exec))
+      .rejects.toMatchObject({ code: 'HISTORY_EVIDENCE_INVALID' })
+  })
+
+  it('searches a session-named spill artifact through history_search', async () => {
+    const file = await spillFile('retained head\nSAVED-NEEDLE in the saved original')
+    const { tools, exec } = harnessFor(spillSession(file))
+
+    const found = String(await toolNamed(tools, 'history_search').execute({ query: 'saved-needle', evidence: file }, exec))
+    expect(found).toContain('Saved tool output evidence search for "saved-needle"')
+    expect(found).toContain('1 match(es)')
+    expect(found).toMatch(/- offset 14: …retained head SAVED-NEEDLE/u)
   })
 })
