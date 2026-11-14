@@ -145,9 +145,22 @@ Data-dependent and bounded by `maxPageBytes` per read and `maxSearchHits`/`maxSe
 
 Append-only result text follows the reusable request prefix and does not invalidate earlier cache entries. The package never rewrites the summary checkpoint that precedes the tail.
 
+### Dev Note
+
+<details>
+<summary>Working context for maintainers — click to expand</summary>
+
+This Dev Note is non-authoritative; shipped behavior lives in the sections above and the code.
+
+- **Saved evidence is an address, not a copy.** A shell result names a subprocess spill file; `history_read`/`history_search` accept that exact session-named path and read it only after checking the private `dsh-subprocess-*` temp root. The model-visible result stays bounded; the artifact may be removed by external temp cleanup, in which case the tool reports the evidence as missing rather than pretending it is complete.
+- **Retention is bounded per file.** `maxEvidenceBytes` (default 16 MiB) rejects larger artifacts explicitly. There is no cross-session or arbitrary-path read.
+- **The pwsh/cache boundary is separate.** `readRawLog` is still one observation; evidence reads are separate bounded file reads and do not change checkpoint semantics.
+
+</details>
+
 ## Known Limitations and Deferred Work
 
-- **Spill-truncated tool results were never in the log.** `dsh-spill-policy` may replace oversized tool output with a preview and locator before the `tool/result` event is appended. This package can only render bytes that reached the Session log; the spill file remains the only source for the removed middle until its retention sweep deletes it.
+- **Saved evidence can disappear.** A shell result names a subprocess spill file; the recall tools can read it only while that exact session-named artifact exists under the private temp root. External temp cleanup, a missing file, or a file above `maxEvidenceBytes` is reported explicitly; bytes that never reached the log or spill file remain unrecoverable.
 - **One raw-log observation per call.** `ctx.sessionQuery.readRawLog` reads the complete raw log once without replay validation or per-event cloning; page bytes are still bounded by `maxPageBytes`, but peak memory grows with the raw log (an 85.8 MB / 114k-event fixture measured ~42 ms cold and ~8 MB extra RSS).
 - **Checkpoint guidance is conditional.** Substantial summaries carry a self-directed recall hint and evidence-boundary reminder; short summaries keep the original framing, and no checkpoint seq pointer is embedded in the summary.
 - **Literal search only.** Matching is case-insensitive and literal; there is no regex, semantic search, or structured query over JSON tool results.

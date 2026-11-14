@@ -7,7 +7,7 @@ kind: "package-reference"
 
 [English](README.md) | 中文
 
-## 摘要
+## 概述
 
 `dsh-tool-history-recall` 让模型列出本会话的压缩检查点、分页读取某个检查点遮蔽的精确原始事件，并在这些原文中按字面量检索。每次调用通过 `ctx.sessionQuery.readRawLog` 取一份浅层原始日志观察，并建立一次供所有页批次共享的 seq 索引：压缩摘要仍是当前上下文，回读内容作为普通且已记录的工具体输出到达。模型可见读取按字节有界、可用游标续读；本包从不改写摘要、表面或请求前缀。
 
@@ -144,6 +144,19 @@ Long sessions may replace older conversation with a compacted checkpoint. Use hi
 #### KV Cache 影响
 
 只追加的结果文本位于可复用请求前缀之后，不会使更早的缓存条目失效。本包从不改写位于尾部之前的摘要检查点。
+
+### 开发备注
+
+<details>
+<summary>维护者工作上下文，点击展开</summary>
+
+本开发备注非权威；实际行为以上文、代码和 Agent Note 为准。
+
+- **保存的证据是地址，不是副本。** shell 结果会点名一个 subprocess spill 文件；`history_read`/`history_search` 只接受本会话工具结果点名的精确路径，并限定在私有 `dsh-subprocess-*` 临时根目录下读取。模型可见结果仍受预算限制；临时文件被外部清理时会明确返回证据缺失。
+- **单文件有上限。** `maxEvidenceBytes`（默认 16 MiB）超限会显式拒绝；不存在跨会话或任意路径读取。
+- **pwsh 与缓存边界分开。** `readRawLog` 仍是一次观察；证据读取是独立的受限文件读取，不改变 checkpoint 语义。
+
+</details>
 
 ## 已知限制与后续工作
 
